@@ -1,0 +1,107 @@
+#!/bin/bash
+
+CT_MAX=1000000
+RULES_MAX=128
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ct-max)
+            CT_MAX="$2"
+            shift 2
+            ;;
+        --rules-max)
+            RULES_MAX="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknkown argument: $1"
+            exit 1
+            ;;
+    esac
+done
+
+CONFIG_H=src/fw_config.h
+BUILD_CONF=build.conf
+: > "$CONFIG_H"
+: > "$BUILD_CONF"
+
+TMPDIR=$(mktemp --tmpdir=${TMPDIR:-/tmp} -d configureXXXXXX)
+: ${PKG_CONFIG:=pkg-config}
+: ${CLANG=clang}
+
+#for TOOL in $CLANG $PKG_CONFIG; do
+for TOOL in $CLANG $PKG_CONFIG; do
+        echo -n "Check for ${TOOL} ...... "
+    if [ ! $(command -v ${TOOL} 2>/dev/null) ]; then
+        echo "not found" ;
+        exit 1;
+    else
+    	echo " OK"
+    fi;
+done
+
+if ${PKG_CONFIG} --exists libbpf; then
+    cat > $TMPDIR/test_bpf.c <<EOF
+#include <bpf/libbpf.h>
+int main() {
+    //bpf_xdp_query_id(0, 0, NULL);
+    bpf_xdp_attach(0, 0, 0, NULL);
+    return 0;
+}
+EOF
+    if ${CLANG} $TMPDIR/test_bpf.c -o $TMPDIR/test_bpf $(pkg-config --cflags --libs libbpf) 2>/dev/null; then
+        echo "HAVE_BPF_XDP_ATTACH := 1" >> "$BUILD_CONF"
+    fi
+else
+    echo "libbpf not found"
+    echo "please install libbpf"
+    exit 1
+fi
+
+if ${PKG_CONFIG} --exists libxdp; then
+    echo "libxdp found"
+    echo "HAVE_LIBXDP := 1" >> "$BUILD_CONF"
+fi
+
+
+detect_hz_from_kernel_config() {
+    FILE="$1"
+    if [ -f "$FILE" ]; then
+        HZ=$(grep '^CONFIG_HZ=' "$FILE" | cut -d= -f2)
+        if [ -n "$HZ" ]; then
+            echo "$HZ"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+detect_hz_from_jiffies() {
+    if [ ! -r /proc/timer_list ]; then
+        return 1
+    fi
+    get_jiffies() {
+        awk '/jiffies:/ { print $2; exit }' /proc/timer_list
+    }
+    J1=$(get_jiffies)
+    sleep 1
+    J2=$(get_jiffies)
+    HZ=$((J2 - J1))
+    echo "$HZ"
+    return 0
+}
+
+HZ=""
+HZ=$(detect_hz_from_kernel_config "/boot/config-$(uname -r)") || \
+HZ=$(zcat /proc/config.gz 2>/dev/null | grep '^CONFIG_HZ=' | cut -d= -f2) || \
+HZ=$(detect_hz_from_jiffies)
+
+echo "#pragma once\n" >> "$CONFIG_H"
+if [ -n "$HZ" ]; then
+    echo "Detected CONFIG_HZ = $HZ"
+    echo "#define HZ $HZ" >> "$CONFIG_H"
+else
+    echo "WARNING: Failed to determine CONFIG_HZ, using default value 250."
+    echo "#define HZ 250" >> "$CONFIG_H"
+fi
+echo "#define FW_MAX_RULES $RULES_MAX" >> "$CONFIG_H"
+echo "#define FW_CT_MAX $CT_MAX" >> "$CONFIG_H"
