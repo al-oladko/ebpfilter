@@ -8,10 +8,10 @@ It supports standard L4-level firewall filtering options such as source and dest
 
 ## Installation
 
-To install XDP-filter, follow these steps:
+To install ebpfilter, follow these steps:
 
 ```bash
-git clone <REPO_URL>
+git clone https://github.com/al-oladko/ebpfilter
 ./configure
 make
 sudo make install
