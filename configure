@@ -95,7 +95,7 @@ HZ=$(detect_hz_from_kernel_config "/boot/config-$(uname -r)") || \
 HZ=$(zcat /proc/config.gz 2>/dev/null | grep '^CONFIG_HZ=' | cut -d= -f2) || \
 HZ=$(detect_hz_from_jiffies)
 
-echo "#pragma once\n" >> "$CONFIG_H"
+echo -e "#pragma once\n" >> "$CONFIG_H"
 if [ -n "$HZ" ]; then
     echo "Detected CONFIG_HZ = $HZ"
     echo "#define HZ $HZ" >> "$CONFIG_H"
