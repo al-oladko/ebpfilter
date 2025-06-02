@@ -1289,7 +1289,7 @@ int fw_run_cmd(const struct cmd *cmd, int argc, char **argv)
 			return cmd[i].handler(argc - 1, argv + 1);
 		}
 	}
-	return -1;
+	return cmd[i].handler(0, NULL);
 }
 
 struct cmd rule_cmds[] = {
@@ -1299,7 +1299,7 @@ struct cmd rule_cmds[] = {
 	{ "flush", fw_rule_flush },
 	{ "set", fw_rule_set_default },
 	{ "help", fw_rule_help },
-	{ NULL, NULL },
+	{ NULL, fw_rule_help },
 };
 
 int fw_prog_rule(int argc, char **argv)
@@ -1324,6 +1324,43 @@ int fw_prog_status(__unused int argc, __unused char **argv)
 	return fw_for_each_dev(fw_print_status);
 }
 
+int fw_prog_do_reload(void)
+{
+	int ret;
+
+	ret = fw_prog_do_unload();
+	if (ret < 0)
+		return ret;
+
+	if (opts.mode == XDP_MODE_LIBXDP)
+		return fw_prog_libxdp_load();
+	return fw_prog_native_load();
+}
+
+int fw_prog_reload_all(struct if_nameindex *iface, int attached)
+{
+	if (!attached)
+		return 0;
+	opts.ifindex = iface->if_index;
+	memcpy(opts.iface, iface->if_name, IFNAMSIZ);
+	
+	return fw_prog_do_reload();
+}
+
+int fw_prog_reload(int argc, char **argv)
+{
+	int ret;
+
+	ret = fw_load_parse_opts(argc, argv);
+	if (ret < 0)
+		return ret;
+
+	if (opts.ifindex < 0)
+		return fw_for_each_dev(fw_prog_reload_all);
+
+	return fw_prog_do_reload();
+}
+
 int fw_prog_help(__unused int argc, __unused char **argv)
 {
 	printf("Usage: %s OBJECT { COMMAND | help }\n"
@@ -1331,8 +1368,9 @@ int fw_prog_help(__unused int argc, __unused char **argv)
 	       " %s load dev IFNAME      Load an XDP program for a interface IFNAME\n"
 	       " %s unload [dev IFNAME]  Unload the XDP program from interface IFNAME,\n"
 	       "                         or from all interfaces if IFNAME is not specified\n"
-	       " %s status               List interfaces where the XDP program is running\n",
-		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
+	       " %s status               List interfaces where the XDP program is running\n"
+	       " %s reload               Reattaching the XDP program while preserving the loaded rule set\n",
+		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
 	return 0;
 }
 
@@ -1342,7 +1380,8 @@ struct cmd cmds[] = {
 	{ "load", fw_prog_load },
 	{ "unload", fw_prog_unload },
 	{ "rule", fw_prog_rule },
-	{ NULL, NULL },
+	{ "reload", fw_prog_reload },
+	{ NULL, fw_prog_help },
 };
 
 int main(int argc, char **argv)
