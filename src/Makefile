@@ -11,10 +11,8 @@ endif
 ifeq (1,$(HAVE_BPF_XDP_ATTACH))
 CFLAGS += -DHAVE_BPF_XDP_ATTACH
 endif
-#ROOT_DIR := $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))")
-#SRC_DIR := ${ROOT_DIR}/src
+SRC_DIR ?= $(CURDIR)
 INCLUDE_OPTS := -I$(SRC_DIR) -I$(SRC_DIR)/include
-$(info Current directory: $(CURDIR), $(PRDIR), $(ROOT_DIR), $(INCLUDE_DIR), src dir $(SRC_DIR))
 
 COMPONENTS := $(shell find $(SRC_DIR) -name '*.h')
 XDP_PROG = ebpfilter.xdp

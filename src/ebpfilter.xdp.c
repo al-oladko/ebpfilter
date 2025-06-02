@@ -15,13 +15,14 @@
 #include <stdbool.h>
 #include <assert.h>
 
+#include "debug.h"
 #include "xbuf.h"
 #include "fw_config.h"
 #include "fw_rule.h"
 #include "fw_tuple.h"
 #include "connection.h"
 #include "dpi.h"
-#include "debug.h"
+#include "fragment.h"
 
 #define VLAN_HLEN 4
 
@@ -201,7 +202,12 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 	int ret;
 	int action;
 
-	/* TODO ip fragments */
+	if (fw_ip_fragment(xbuf, &action)) {
+		/* TODO Add statistics for fragments */
+		if (action == FW_DROP)
+			return XDP_DROP;
+		return XDP_PASS;
+	}
 
 	ret = fill_fw4_tuple(xbuf, &key);
 	if (ret) {
@@ -219,8 +225,10 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 		ct->need_recheck = 0;
 	fw_do_stat(xbuf, ct->fw_table_genid & 1, ct->fw_rule_num);
 
-	if (action != FW_DROP)
+	if (action != FW_DROP) {
+		fw_ip_fragment_finish(xbuf);
 		fw_conn_put(ct, &key);
+	}
 
 	if (action == FW_DROP)
 		return XDP_DROP;

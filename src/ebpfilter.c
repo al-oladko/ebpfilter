@@ -48,7 +48,6 @@ struct {
 	char prog_name[NAME_MAX];
 	char pinned_maps_dir[PATH_MAX];
 } cfg = {
-	//.prog_dir_path = "/home/bender/test/bpf/",
 	.prog_dir_path = "/lib/bpf",
 	.prog_file_name = "ebpfilter.xdp.o",
 	.prog_name = "xdp_rcv",
@@ -317,69 +316,6 @@ int fw_maps_pin(struct bpf_object *obj)
 	return 0;
 }
 
-#if 0
-int main() {
-    const char *filename = "multi_prog_kern.o";
-    const char *ifname = "eth0";
-    int ifindex = if_nametoindex(ifname);
-
-    if (ifindex == 0) {
-        perror("if_nametoindex");
-        return 1;
-    }
-
-    struct bpf_object *obj;
-    struct bpf_program *xdp_prog, *tc_prog;
-    int xdp_fd, tc_fd, err;
-
-    // Открываем объект
-    obj = bpf_object__open_file(filename, NULL);
-    if (!obj) {
-        fprintf(stderr, "Failed to open BPF object\n");
-        return 1;
-    }
-
-    // Загружаем все программы
-    err = bpf_object__load(obj);
-    if (err) {
-        fprintf(stderr, "Failed to load BPF object: %s\n", strerror(-err));
-        return 1;
-    }
-
-    // Получаем программы по имени
-    xdp_prog = bpf_object__find_program_by_name(obj, "xdp_prog_simple");
-    tc_prog = bpf_object__find_program_by_name(obj, "tc_prog_mark");
-
-    if (!xdp_prog || !tc_prog) {
-        fprintf(stderr, "Failed to find one of the programs by name\n");
-        return 1;
-    }
-
-    xdp_fd = bpf_program__fd(xdp_prog);
-    tc_fd = bpf_program__fd(tc_prog);
-
-    // Прикрепляем XDP-программу
-    err = bpf_set_link_xdp_fd(ifindex, xdp_fd, 0);
-    if (err < 0) {
-        fprintf(stderr, "Failed to attach XDP: %s\n", strerror(-err));
-        return 1;
-    }
-    printf("Attached XDP program\n");
-
-    // Теперь TC-программа — через `tc` или `tc-helpers`. Здесь пример с `tc`:
-
-    // можно использовать system(), но лучше через libbpf's tc helpers или bpftool
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd),
-             "tc qdisc add dev %s clsact; "
-             "tc filter add dev %s ingress bpf da obj %s sec 'tc'",
-             ifname, ifname, filename);
-    system(cmd);
-
-    printf("Attached TC program\n");
-    return 0;
-}
-#endif
 void fw_maps_unpin(void);
 int fw_prog_native_load(void)
 {
@@ -546,61 +482,6 @@ int fw_prog_load(int argc, char **argv)
 		return fw_prog_libxdp_load();
 	return fw_prog_native_load();
 }
-
-#if 0
-//TC TC TC TC
-int main() {
-    const char *ifname = "eth0";
-    const char *filename = "xdp_prog_kern.o";
-    struct bpf_object *obj;
-    struct bpf_program *prog;
-    int prog_fd, ifindex, err;
-
-    // Получаем индекс интерфейса
-    ifindex = if_nametoindex(ifname);
-    if (ifindex == 0) {
-        perror("if_nametoindex");
-        return 1;
-    }
-
-    // Загружаем объект
-    obj = bpf_object__open_file(filename, NULL);
-    if (!obj) {
-        fprintf(stderr, "Failed to open BPF object\n");
-        return 1;
-    }
-
-    // Загружаем все программы
-    err = bpf_object__load(obj);
-    if (err) {
-        fprintf(stderr, "Failed to load BPF object: %s\n", strerror(-err));
-        return 1;
-    }
-
-    // Получаем программу
-    prog = bpf_object__find_program_by_name(obj, "xdp_prog_simple");
-    if (!prog) {
-        fprintf(stderr, "Failed to find XDP program by name\n");
-        return 1;
-    }
-
-    prog_fd = bpf_program__fd(prog);
-    if (prog_fd < 0) {
-        fprintf(stderr, "Failed to get program FD\n");
-        return 1;
-    }
-
-    // Прикрепляем программу к TC
-    err = bpf_prog_attach(prog_fd, ifindex, BPF_TC_ACT_SHOT, 0);
-    if (err < 0) {
-        fprintf(stderr, "Failed to attach XDP program to TC: %s\n", strerror(-err));
-        return 1;
-    }
-
-    printf("XDP program successfully attached to TC on %s\n", ifname);
-    return 0;
-}
-#endif
 
 void fw_maps_unpin(void)
 {

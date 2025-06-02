@@ -7,7 +7,7 @@
 #include "debug.h"
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__type(key, struct fw4_tuple);
 	__type(value, struct fw_conn);
 	__uint(max_entries, FW_CT_MAX);

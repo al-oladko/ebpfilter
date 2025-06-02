@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Aleksei Oladko <aleks.oladko@gmail.com>
 #pragma once
 
+#define XBUF_FLAG_IP_FRAG	0x01
 struct xbuf {
 	struct xdp_md	*ctx;
 	unsigned char	*data;
@@ -17,6 +18,7 @@ struct xbuf {
 	__u16		payload_len;
 	__u8		ct_dir;
 	__u8		dpi_processed;
+	int		flags;
 };
 
 static __always_inline void xbuf_set_len(struct xbuf *xbuf, int pkt_len)
@@ -33,6 +35,7 @@ static __always_inline void xbuf_init(struct xdp_md *ctx, struct xbuf *xbuf)
 	xbuf->payload = xbuf->data;
 	xbuf->payload_len = 0;
 	xbuf->dpi_processed = 0;
+	xbuf->flags = 0;
 }
 
 static __always_inline unsigned char *xbuf_packet_data(const struct xbuf *xbuf)

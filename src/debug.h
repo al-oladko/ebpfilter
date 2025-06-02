@@ -2,7 +2,6 @@
 // Copyright (C) 2025 Aleksei Oladko <aleks.oladko@gmail.com>
 #pragma once
 
-#define DEBUG
 #ifdef DEBUG
 
 #define pr_dbg(format, ...) bpf_printk(format, ##__VA_ARGS__)
