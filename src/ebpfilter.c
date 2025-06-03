@@ -1289,7 +1289,10 @@ int fw_run_cmd(const struct cmd *cmd, int argc, char **argv)
 			return cmd[i].handler(argc - 1, argv + 1);
 		}
 	}
-	return cmd[i].handler(0, NULL);
+	fprintf(stderr, "Error: unknown command '%s'\n", *argv);
+	if (cmd[i].handler)
+		return cmd[i].handler(0, NULL);
+	return -1;
 }
 
 struct cmd rule_cmds[] = {
