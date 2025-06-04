@@ -3,6 +3,7 @@
 #pragma once
 
 #include "fw_connection.h"
+#include "fw_tuple.h"
 #include "fw_config.h"
 #include "debug.h"
 

@@ -20,7 +20,7 @@
 #include "xbuf.h"
 #include "fw_config.h"
 #include "fw_rule.h"
-#include "fw_tuple.h"
+#include "tuple.h"
 #include "connection.h"
 #include "dpi.h"
 #include "fragment.h"
