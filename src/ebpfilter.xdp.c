@@ -16,6 +16,7 @@
 #include <assert.h>
 
 #include "debug.h"
+#include "atomic.h"
 #include "xbuf.h"
 #include "fw_config.h"
 #include "fw_rule.h"
@@ -109,7 +110,7 @@ static __always_inline bool fw_rule_l7_protocol(struct fw_conn *ct,
 	struct rule_l7 *r = (struct rule_l7 *)param;
 
 	/* TODO error message */
-	static_assert(sizeof(struct rule_l7) == sizeof(struct fw_param), "error");
+	static_assert(sizeof(struct rule_l7) <= sizeof(struct fw_param), "error");
 
 	if (ct->dpi.protocol == r->protocol) {
 		return true;
@@ -121,6 +122,75 @@ static __always_inline bool fw_rule_l7_protocol(struct fw_conn *ct,
 	if (action == FW_DROP) {
 		return false;
 	}
+	return true;
+}
+
+static __always_inline bool fw_rule_connlimit(struct fw_conn *ct,
+					      struct fw_param *param,
+					      int action)
+{
+	struct connlimit *cl = (struct connlimit *)param;
+	int need = cl->ct_cost;
+	__u64 jiffies, old_jiffies, extra_ticks;
+	int extra_budget = 0;
+
+	static_assert(sizeof(struct connlimit) <= sizeof(struct fw_param), "error");
+
+	if (ct->status == FW_CT_ESTABLISHED)
+		return true;
+
+	if (atomic_read(&cl->budget) >= cl->ct_cost) {
+		/* another thread might have decremented the budget */
+		if (atomic64_sub_return(&cl->budget, cl->ct_cost) >= 0) {
+			return true;
+		}
+		/* money back */
+		atomic64_add_return(&cl->budget, cl->ct_cost);
+	}
+
+	jiffies = bpf_jiffies64();
+	if (cl->jiffies == 0)
+		cl->jiffies = jiffies;
+	old_jiffies = cl->jiffies;
+	if (jiffies > old_jiffies &&
+	    (jiffies - old_jiffies) * cl->tick_cost + cl->budget >= cl->ct_cost) {
+		extra_ticks = atomic64_cmpxchg((__s64 *)&cl->jiffies, old_jiffies, jiffies);
+		extra_ticks = jiffies - extra_ticks;
+
+		if (extra_ticks) {
+			/* be greedy, spend the budget on yourself */
+			extra_budget = extra_ticks * cl->tick_cost;
+			if (extra_budget > cl->max_budget) {
+				extra_budget = cl->max_budget;
+			}
+
+			if (extra_budget >= cl->ct_cost) {
+				extra_budget -= cl->ct_cost;
+				if (cl->max_budget - cl->budget < extra_budget)
+					extra_budget = cl->max_budget - cl->budget;
+				atomic64_add_return(&cl->budget, extra_budget);
+				return true;
+			}
+			need = cl->ct_cost - extra_budget;
+		}
+	}
+
+	if (atomic_read(&cl->budget) < need) {
+		if (extra_budget)
+			atomic64_add_return(&cl->budget, extra_budget);
+
+		return false;
+	}
+
+	/* another thread increased the budget */
+	if (atomic64_sub_return(&cl->budget, need) < 0) {
+		/* return need + extra_budget,
+		 * but this is exactly ct->ct_coss
+		 */
+		atomic64_add_return(&cl->budget, cl->ct_cost);
+		return false;
+	}
+
 	return true;
 }
 
@@ -138,6 +208,10 @@ static __always_inline bool fw_rule_check_params(struct fw_conn *ct,
 			return true;
 		case FW_RULE_PARAM_L7_PROTOCOL:
 			ret = fw_rule_l7_protocol(ct, param, rule->action);
+			if (!ret)
+				return false;
+		case FW_RULE_PARAM_CONNLIMIT:
+			ret = fw_rule_connlimit(ct, param, rule->action);
 			if (!ret)
 				return false;
 		default:

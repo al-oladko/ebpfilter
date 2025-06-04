@@ -9,14 +9,31 @@
 
 #define FW_RULE_PARAM_NONE		0
 #define FW_RULE_PARAM_L7_PROTOCOL	1
+#define FW_RULE_PARAM_CONNLIMIT		2
 
-#define FW_RULE_MAX_PARAMS 2
+#define FW_RULE_MAX_PARAMS		2
 struct fw_param {
 	__u8	type;
 	__u8	arg_u8;
 	__u16	arg_u16;
 	__u32	arg0_u32;
 	__u32	arg1_u32;
+	__u64	arg0_u64;
+	__u64	arg1_u64;
+};
+
+struct connlimit {
+	__u8	type;
+	__u8	unused;
+	__u16	ct_cost;
+	__u32	tick_cost;
+	__s32	max_budget;
+	/* It is necessary to use __s64 instead of __s32 due to the defect "fatal
+	 * error: error in backend: Cannot select: 0x3c1c2c80: i64,ch = AtomicLoadSub
+	 * <(load store seq_cst (s32) on %ir.896)>"
+	 */
+	__s64	budget;
+	__u64	jiffies;
 };
 
 struct fw_rule {

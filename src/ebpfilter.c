@@ -607,6 +607,10 @@ struct rule {
 	uint8_t protocol;
 	uint8_t l7protocol;
 	int action;
+	/* connlimit */
+	int ct_cost;
+	int tick_cost;
+	int connlimit_budget;
 };
 
 void fw_stats_update(int gen_id)
@@ -754,6 +758,25 @@ int fw_policy_update(struct rule *rule)
 		drule->type = FW_RULE_PARAM_L7_PROTOCOL;
 		drule->protocol = rule->l7protocol;
 	}
+	if (rule->ct_cost) {
+		int j;
+		struct connlimit *cl = NULL;
+
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (frule.params[j].type == FW_RULE_PARAM_NONE) {
+				cl = (struct connlimit *)&frule.params[j];
+				break;
+			}
+		}
+		if (!cl) {
+			fprintf(stderr, "Error: the limit on the maximum number of parameters in the rule has been reached\n");
+			return -1;
+		}
+		cl->ct_cost = rule->ct_cost;
+		cl->tick_cost = rule->tick_cost;
+		cl->budget = cl->max_budget = rule->connlimit_budget;
+		cl->type = FW_RULE_PARAM_CONNLIMIT;
+	}
 	frule.action = rule->action;
 
 	for (i = set.num; i > rule->rule_num; i--) {
@@ -812,6 +835,17 @@ int fw_opts_check_and_get_dev(void)
 		return -1;
 	}
 	return 0;
+}
+
+bool is_number(const char *str)
+{
+	while (*str) {
+		if (*str >= '0' && *str <= '9')
+			str++;
+		else
+			break;
+	}
+	return *str == 0;
 }
 
 char *srv_list[DPI_PROTO_MAX] = {
@@ -950,6 +984,79 @@ int fw_rule_add(int argc, char **argv)
 			}
 			goto next;
 		}
+		if (strcmp("connlimit", *argv) == 0) {
+			char *sl;
+			unsigned int ct_limit, time_limit;
+			int m = 1;
+			int ct_cost = 1, tick_cost = 1;
+			argv++;
+			argc--;
+			sl = strchr(*argv, '/');
+			if (!sl) {
+				fprintf(stderr, "Error: Invalid connection limit format %s\n", *argv);
+				return -1;
+			}
+			*sl = 0;
+			sl++;
+			if (!is_number(*argv)) {
+				fprintf(stderr, "Error: Invalid connection limit format %s\n", *argv);
+				return -1;
+			}
+			ct_limit = atoi(*argv);
+			if (ct_limit <= 0) {
+				fprintf(stderr, "Error: Invalid connection limit format %s\n", *argv);
+				return -1;
+			}
+			if (sl[strlen(sl) - 1] == 'h') {
+				m = 60 * 60;
+			} else if (sl[strlen(sl) - 1] == 'm') {
+				m = 60;
+			} else if (sl[strlen(sl) - 1] != 's') {
+				fprintf(stderr, "Error: Invalid connection limit format %s\n", sl);
+				return -1;
+			}
+			sl[strlen(sl) - 1] = 0;
+			if (!is_number(sl)) {
+				fprintf(stderr, "Error: Invalid connection limit format %s\n", sl);
+				return -1;
+			}
+			time_limit = atoi(sl);
+			if (time_limit <= 0) {
+				fprintf(stderr, "Error: Invalid connection limit format %s\n", sl);
+				return -1;
+			}
+			time_limit *= m * HZ;
+			if (time_limit == ct_limit) {
+			} else if (time_limit > ct_limit) {
+				int add;
+				ct_cost = time_limit / ct_limit;
+				add = ((time_limit % ct_limit) * 10) / ct_limit;
+				if (add) {
+					ct_cost = ct_cost * 10 + add;
+					tick_cost = 10;
+				}
+			} else if (time_limit < ct_limit) {
+				int add;
+				tick_cost = ct_limit / time_limit;
+				add = ((ct_limit % time_limit) * 10) / time_limit;
+				if (add) {
+					tick_cost = tick_cost * 10 + add;
+					ct_cost = 10;
+				}
+			}
+			if (ct_cost > UINT16_MAX) {
+				fprintf(stderr, "Error: the specified rate is too small and is not currently supported\n");
+				return -1;
+			}
+			if (ct_cost * ct_limit > INT32_MAX) {
+				fprintf(stderr, "Error: the specified rate is too high and is not supported\n");
+				return -1;
+			}
+			rule.ct_cost = ct_cost;
+			rule.tick_cost = tick_cost;
+			rule.connlimit_budget = ct_cost * ct_limit;
+			goto next;
+		}
 		fprintf(stderr,"Unknown option '%s'\n", *argv);
 		return -1;
 next:
@@ -992,7 +1099,12 @@ int fw_rule_help(__unused int argc, __unused char **argv)
 	       "  port NUM                  destination port for TCP or UDP\n"
 	       "  src-port NUM              source port for TCP or UDP\n"
 	       "  service [ssh|tls|dns|http|ping]\n"
-	       "                            protocol detected by DPI\n",
+	       "                            protocol detected by DPI\n"
+	       " connlimit connections_per_period/period\n"
+	       "                            limit of new connections for the rule.. The format is\n"
+	       "                            [connections per period]/[period], where the period\n"
+	       "                            is specified in seconds, minutes, or hours, and must\n"
+	       "                            be indicated with the suffixes s, m, or h, respectively\n",
 	       opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
 	return 0;
 }
@@ -1211,6 +1323,7 @@ int fw_rule_show(int argc, char **argv)
 	for (i = 0; i < set.num+1; i++) {
 		struct fw_rule *rule = &set.rules[i];
 		unsigned int l7 = 0;
+		int j;
 
 		if (i == set.num)
 			printf("default:");
@@ -1224,9 +1337,11 @@ int fw_rule_show(int argc, char **argv)
 		if (print_array_index(protos, rule->protocol, 6) < 0) {
 			goto out;
 		}
-		if (rule->params[0].type == FW_RULE_PARAM_L7_PROTOCOL) {
-			struct rule_l7 *drule = (struct rule_l7 *)&rule->params[0];
-			l7 = drule->protocol;
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (rule->params[j].type == FW_RULE_PARAM_L7_PROTOCOL) {
+				struct rule_l7 *drule = (struct rule_l7 *)&rule->params[j];
+				l7 = drule->protocol;
+			}
 		}
 		if (print_array_index(srv_list, l7, 5) < 0) {
 			goto out;
@@ -1257,6 +1372,25 @@ int fw_rule_show(int argc, char **argv)
 			printf(" sport %d", ntohs(rule->sport));
 		if (rule->dport)
 			printf(" dport %d", ntohs(rule->dport));
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (rule->params[j].type == FW_RULE_PARAM_CONNLIMIT) {
+				struct connlimit *cl = (struct connlimit *)&rule->params[j];
+				int ct_limit, time_limit;
+				char t[] = {'s', 'm', 'h'};
+				unsigned char ind = 0;
+				ct_limit = cl->max_budget / cl->ct_cost;
+				time_limit = cl->max_budget / (cl->tick_cost * HZ);
+				if (time_limit >= 60 && time_limit % 60 == 0) {
+					time_limit /= 60;
+					ind++;
+					if (time_limit >= 60 && time_limit % 60 == 0) {
+						time_limit /= 60;
+						ind++;
+					}
+				}
+				printf(" connlimit %d/%d%c", ct_limit, time_limit, t[ind]);
+			}
+		}
 
 		printf("\n");
 	}

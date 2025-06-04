@@ -51,6 +51,16 @@ ebpfilter unload [dev <ifname>]
 
 If `<ifname>` is not specified, the program will be unloaded from all interfaces.
 
+### Reload XDP program
+
+Reattaching the XDP program while preserving the loaded rule set:
+
+```bash
+ebpfilter reload [dev <ifname>]
+```
+
+If `<ifname>` is not specified, the program will be reloaded on all interfaces.
+
 ---
 
 ## Managing Rules
@@ -90,6 +100,14 @@ This rule allows TLS traffic regardless of the destination port (not limited to 
 ```bash
 ebpfilter rule add src any dst 192.168.1.1 tcp port 443 service tls action accept
 ```
+**Setting connection limit**
+
+```bash
+ebpfilter rule add tcp port 443 connlimit 100/1s action accept
+```
+
+Limit of new connections for the rule. The format is [connections_per_period]/[period], where the period is specified in seconds, minutes, or hours, and must be indicated with the suffixes s, m, or h, respectively.
+
 To get information about other options when adding a rule, see the help for the rule command.
 
 ### View help for rule syntax
