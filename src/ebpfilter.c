@@ -1685,7 +1685,7 @@ int fw_prog_help(__unused int argc, __unused char **argv)
 	       " %s status               List interfaces where the XDP program is running\n"
 	       " %s connection           View connection tracking table\n"
 	       " %s reload               Reattaching the XDP program while preserving the loaded rule set\n",
-		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
+		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
 	return 0;
 }
 
