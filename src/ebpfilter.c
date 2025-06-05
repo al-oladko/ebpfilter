@@ -859,8 +859,11 @@ int fw_rule_add(int argc, char **argv)
 	int rule_num, next_port, action_f = 0;
 	struct rule rule;
 
-	if (!argc)
+	if (!argc) {
+		fprintf(stderr, "Command 'rule add' requires arguments\n");
 		return -1;
+	}
+
 	memset(&rule, 0, sizeof(rule));
 	rule_num = atoi(*argv);
 	if (rule_num < 0 || rule_num > FW_MAX_RULES) {
@@ -876,6 +879,10 @@ int fw_rule_add(int argc, char **argv)
 		if (strcmp("name", *argv) == 0) {
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'name' requires an argument\n");
+				return -1;
+			}
 			strncpy(rule.name, *argv, RULE_NAME_LEN - 1);
 			rule.name[RULE_NAME_LEN - 1] = 0;
 			goto next;
@@ -883,6 +890,10 @@ int fw_rule_add(int argc, char **argv)
 		if (strcmp("src", *argv) == 0) {
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'src' requires an argument\n");
+				return -1;
+			}
 			ret = fw_get_ip(&rule.src, *argv);
 			if (ret < 0)
 				break;
@@ -891,6 +902,10 @@ int fw_rule_add(int argc, char **argv)
 		if (strcmp("dst", *argv) == 0) {
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'dst' requires an argument\n");
+				return -1;
+			}
 			ret = fw_get_ip(&rule.dst, *argv);
 			if (ret < 0)
 				break;
@@ -899,6 +914,10 @@ int fw_rule_add(int argc, char **argv)
 		if (strcmp("action", *argv) == 0) {
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'action' requires an argument\n");
+				return -1;
+			}
 			action_f = 1;
 			if (strcmp("drop", *argv) == 0) {
 				rule.action = FW_DROP;
@@ -930,6 +949,10 @@ int fw_rule_add(int argc, char **argv)
 			}
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'port' requires an argument\n");
+				return -1;
+			}
 			ret = atoi(*argv);
 			if (!ret || ret > 65535) {
 				fprintf(stderr, "Invalid port number '%s'.\n", *argv);
@@ -945,6 +968,10 @@ int fw_rule_add(int argc, char **argv)
 			}
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'src-port' requires an argument\n");
+				return -1;
+			}
 			ret = atoi(*argv);
 			if (!ret || ret > 65535) {
 				fprintf(stderr, "Invalid port number '%s'.\n", *argv);
@@ -956,6 +983,10 @@ int fw_rule_add(int argc, char **argv)
 		if (strcmp("service", *argv) == 0) {
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'service' requires an argument\n");
+				return -1;
+			}
 			if (strcmp("ping", *argv) == 0) {
 				if (rule.protocol && rule.protocol != IPPROTO_ICMP) {
 					fprintf(stderr, "Ping service cannot be specified when TCP or UDP protocol is selected.\n");
@@ -993,6 +1024,10 @@ int fw_rule_add(int argc, char **argv)
 			int ct_cost = 1, tick_cost = 1;
 			argv++;
 			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'connlimit' requires an argument\n");
+				return -1;
+			}
 			sl = strchr(*argv, '/');
 			if (!sl) {
 				fprintf(stderr, "Error: Invalid connection limit format %s\n", *argv);
