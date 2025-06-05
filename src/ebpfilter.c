@@ -26,6 +26,8 @@
 
 #include "fw_rule.h"
 #include "fw_dpi.h"
+#include "fw_tuple.h"
+#include "fw_connection.h"
 
 #define __unused __attribute__((__unused__))
 
@@ -1225,9 +1227,10 @@ int fw_rule_delete(int argc, char **argv)
 	return 0;
 }
 
-void fw_print_ip(__be32 addr, __be32 mask)
+void fw_print_ip(__be32 addr, __be32 mask, int width)
 {
 	char str[32] = "any";
+	char format[8];
 	if (addr) {
 		int mask_len = __builtin_popcount(mask);
 		struct in_addr in = {
@@ -1238,7 +1241,8 @@ void fw_print_ip(__be32 addr, __be32 mask)
 		else
 			snprintf(str, sizeof(str), "%s", inet_ntoa(in));
 	}
-	printf("%19s", str);
+	snprintf(format, sizeof(format), "%%%ds", width);
+	printf(format, str);
 }
 
 void fw_print_stat(uint64_t value)
@@ -1256,6 +1260,13 @@ void fw_print_stat(uint64_t value)
 	snprintf(str, sizeof(str), "%ld%s", value, dim[sp]);
 	printf("%6s", str);
 }
+
+char *protos[] = {
+	[IPPROTO_IP]	= "any",
+	[IPPROTO_ICMP]	= "icmp",
+	[IPPROTO_TCP]	= "tcp",
+	[IPPROTO_UDP]	= "udp",
+};
 
 #define check_array_index(array, index) ((index) < (sizeof(array) / sizeof(array[0])))
 #define print_array_index(array, index, width)				\
@@ -1277,12 +1288,6 @@ int fw_rule_show(int argc, char **argv)
 	int i;
 	struct fw_rule_stats *stats;
 	int ncpus;
-	char *protos[] = {
-		[IPPROTO_IP]	= "any",
-		[IPPROTO_ICMP]	= "icmp",
-		[IPPROTO_TCP]	= "tcp",
-		[IPPROTO_UDP]	= "udp",
-	};
 	char *actions[] = {
 		[FW_PASS] = "accept",
 		[FW_DROP] = "drop",
@@ -1330,8 +1335,8 @@ int fw_rule_show(int argc, char **argv)
 		else
 			printf("%2d rule:", i + 1);
 
-		fw_print_ip(rule->saddr, rule->smask);
-		fw_print_ip(rule->daddr, rule->dmask);
+		fw_print_ip(rule->saddr, rule->smask, 19);
+		fw_print_ip(rule->daddr, rule->dmask, 19);
 
 		ret = -1;
 		if (print_array_index(protos, rule->protocol, 6) < 0) {
@@ -1498,6 +1503,143 @@ int fw_prog_reload(int argc, char **argv)
 	return fw_prog_do_reload();
 }
 
+#include <sys/sysinfo.h>
+#include <time.h>
+#define MAP_IDS_NUM 16
+int fw_prog_connection(int argc, char **argv)
+{
+	int ret;
+	int fd;
+	__u32 prog_id;
+	struct bpf_prog_info info = {};
+	__u32 len = sizeof(info);
+	__u32 map_ids[MAP_IDS_NUM];
+	unsigned int i;
+	int ct_map_fd = -1;
+	struct fw4_tuple key, *prev_key = NULL;
+	struct fw_conn ct;
+	struct sysinfo sinfo;
+
+	if (argc > 0) {
+		if (argc != 2 || strcmp("dev", *argv))
+			return -1;
+		argv++;
+		ret = parse_dev(*argv);
+		if (ret < 0)
+			return -1;
+	}
+
+	if (fw_opts_check_and_get_dev() < 0)
+		return -1;
+
+#ifdef HAVE_BPF_XDP_ATTACH
+	ret = bpf_xdp_query_id(opts.ifindex, 0, &prog_id);
+#else
+	ret = bpf_get_link_xdp_id(iopts.findex, &prog_id, 0);
+#endif
+	if (ret < 0 || prog_id == 0) {
+		fprintf(stderr, "Prog is not attached to %s.\n", opts.iface);
+		return -1;
+	}
+
+	fd = bpf_prog_get_fd_by_id(prog_id);
+	if (fd < 0) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return -1;
+	}
+
+	info.nr_map_ids = MAP_IDS_NUM;
+        info.map_ids = (__u64)(unsigned long)map_ids;
+	ret = bpf_obj_get_info_by_fd(fd, &info, &len);
+	if (ret) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return -1;
+	}
+
+	for (i = 0; i < info.nr_map_ids; i++) {
+		int map_fd = bpf_map_get_fd_by_id(map_ids[i]);
+		struct bpf_map_info map_info = {};
+		__u32 map_info_len = sizeof(map_info);
+
+		if (map_fd < 0)
+			continue;
+
+		ret = bpf_obj_get_info_by_fd(map_fd, &map_info, &map_info_len);
+		if (ret == 0) {
+			if (strcmp(map_info.name, "fw_conn_tracker") == 0) {
+				ct_map_fd = map_fd;
+				break;
+			}
+		}
+	}
+	if (ct_map_fd < 0) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return -1;
+	}
+
+	if (sysinfo(&sinfo) < 0) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return -1;
+	}
+
+	if (opts.verbose)
+	printf("            src             dst proto ports        info                        status\n");
+	else
+	printf("            src             dst proto ports        info    status\n");
+	while (bpf_map_get_next_key(ct_map_fd, prev_key, &key) == 0) {
+		time_t timeout;
+		if (bpf_map_lookup_elem(ct_map_fd, &key, &ct) != 0) {
+			continue;
+		}
+		timeout = (ct.timeout - (4294967295 - (300 * HZ))) / HZ;
+		fw_print_ip(key.saddr, 0, 15);
+		fw_print_ip(key.daddr, 0, 16);
+		print_array_index(protos, key.l4protocol, 6);
+		if (key.l4protocol == IPPROTO_TCP || key.l4protocol == IPPROTO_UDP) {
+			char str[16];
+			snprintf(str, sizeof(str), "%d->%d", ntohs(key.sport), ntohs(key.dport));
+			printf(" %-12s", str);
+		} else {
+				printf("             ");
+		}
+		printf(" %18s", timeout - sinfo.uptime < 0 ? RED_TEXT("expired") : GREEN_TEXT("active"));
+		if (opts.verbose) {
+			if (timeout - sinfo.uptime < 0) {
+				int pr = 0;
+				int len = 0;
+				char format[32];
+
+				timeout = sinfo.uptime - timeout;
+				printf(" ");
+				if (timeout > 24 * 3600) {
+					len = printf("%ldd:", timeout / 24 * 3600);
+					pr++;
+					timeout %= (24 * 3600);
+				}
+				if (pr || timeout > 3600) {
+					len += printf("%ldh:", timeout / 3600);
+					pr++;
+					timeout %= 3600;
+				}
+				if (pr || timeout > 60) {
+					len += printf("%02ldm:", timeout / 60);
+					timeout %= 60;
+				}
+				len += printf("%02lds", timeout);
+				snprintf(format, sizeof(format), "%%-%ds", 19 - len < 4 ? 4 : 19 - len);
+				printf(format, " ago");
+			} else {
+				char str[32];
+				snprintf(str, sizeof(str)," expired in %lds", timeout - sinfo.uptime);
+				printf("%-20s", str);
+			}
+		}
+		printf(" %s by rule %d\n", ct.fw_action == FW_DROP ? RED_TEXT("dropped") : GREEN_TEXT("accepted"), ct.fw_rule_num + 1);
+		prev_key = &key;
+	}
+	return 0;
+}
+
 int fw_prog_help(__unused int argc, __unused char **argv)
 {
 	printf("Usage: %s OBJECT { COMMAND | help }\n"
@@ -1506,6 +1648,7 @@ int fw_prog_help(__unused int argc, __unused char **argv)
 	       " %s unload [dev IFNAME]  Unload the XDP program from interface IFNAME,\n"
 	       "                         or from all interfaces if IFNAME is not specified\n"
 	       " %s status               List interfaces where the XDP program is running\n"
+	       " %s connection           View connection tracking table\n"
 	       " %s reload               Reattaching the XDP program while preserving the loaded rule set\n",
 		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
 	return 0;
@@ -1518,6 +1661,7 @@ struct cmd cmds[] = {
 	{ "unload", fw_prog_unload },
 	{ "rule", fw_prog_rule },
 	{ "reload", fw_prog_reload },
+	{ "connection", fw_prog_connection },
 	{ NULL, fw_prog_help },
 };
 

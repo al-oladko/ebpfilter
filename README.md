@@ -63,6 +63,16 @@ If `<ifname>` is not specified, the program will be reloaded on all interfaces.
 
 ---
 
+### View connection
+
+View connection tracking table:
+
+```bash
+ebpfilter connection [dev <ifname>]
+```
+
+If `<ifname>` is not specified, the program will be reloaded on all interfaces.
+
 ## Managing Rules
 
 ### Set default policy
