@@ -21,6 +21,8 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
+#include <time.h>
 #define LOCK_FILE "/var/run/ebpfilter.lock"
 
 
@@ -1538,8 +1540,6 @@ int fw_prog_reload(int argc, char **argv)
 	return fw_prog_do_reload();
 }
 
-#include <sys/sysinfo.h>
-#include <time.h>
 #define MAP_IDS_NUM 16
 int fw_prog_connection(int argc, char **argv)
 {
