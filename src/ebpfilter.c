@@ -779,6 +779,9 @@ int fw_policy_update(struct rule *rule)
 		cl->ct_cost = rule->ct_cost;
 		cl->tick_cost = rule->tick_cost;
 		cl->budget = cl->max_budget = rule->connlimit_budget;
+		if (cl->tick_cost / cl->ct_cost > 10) {
+			cl->credit = HZ / 25;
+		}
 		cl->type = FW_RULE_PARAM_CONNLIMIT;
 	}
 	frule.action = rule->action;

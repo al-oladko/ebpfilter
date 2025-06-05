@@ -154,6 +154,7 @@ static __always_inline bool fw_rule_connlimit(struct fw_conn *ct,
 	old_jiffies = cl->jiffies;
 	if (jiffies > old_jiffies &&
 	    (jiffies - old_jiffies) * cl->tick_cost + cl->budget >= cl->ct_cost) {
+		jiffies += cl->credit;
 		extra_ticks = atomic64_cmpxchg((__s64 *)&cl->jiffies, old_jiffies, jiffies);
 		extra_ticks = jiffies - extra_ticks;
 

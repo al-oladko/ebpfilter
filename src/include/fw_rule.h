@@ -24,7 +24,7 @@ struct fw_param {
 
 struct connlimit {
 	__u8	type;
-	__u8	unused;
+	__u8	credit;
 	__u16	ct_cost;
 	__u32	tick_cost;
 	__s32	max_budget;
