@@ -758,7 +758,7 @@ int fw_policy_update(struct rule *rule)
 	}
 	if (rule->l7protocol) {
 		struct rule_l7 *drule = (struct rule_l7 *)&frule.params[0];
-		/* TODO struct */
+
 		drule->type = FW_RULE_PARAM_L7_PROTOCOL;
 		drule->protocol = rule->l7protocol;
 	}
@@ -1655,7 +1655,7 @@ int fw_prog_connection(int argc, char **argv)
 					timeout %= (24 * 3600);
 				}
 				if (pr || timeout > 3600) {
-					len += printf("%ldh:", timeout / 3600);
+					len += printf("%02ldh:", timeout / 3600);
 					pr++;
 					timeout %= 3600;
 				}
@@ -1672,7 +1672,7 @@ int fw_prog_connection(int argc, char **argv)
 				printf("%-20s", str);
 			}
 		}
-		printf(" %s by rule %d\n", ct.fw_action == FW_DROP ? RED_TEXT("dropped") : GREEN_TEXT("accepted"), ct.fw_rule_num + 1);
+		printf(" %s by rule %d\n", ct.fw_action == FW_DROP ? RED_TEXT(" dropped") : GREEN_TEXT("accepted"), ct.fw_rule_num + 1);
 		prev_key = &key;
 	}
 	return 0;
@@ -1684,11 +1684,14 @@ int fw_prog_help(__unused int argc, __unused char **argv)
 	       "where  OBJECT := { load | unload | rule | status | help }\n\n"
 	       " %s load dev IFNAME      Load an XDP program for a interface IFNAME\n"
 	       " %s unload [dev IFNAME]  Unload the XDP program from interface IFNAME,\n"
-	       "                         or from all interfaces if IFNAME is not specified\n"
+	       "                                or from all interfaces if IFNAME is not specified\n"
+	       " %s rule ...             firewall rule managment. see '%s rule help' for more\n"
+	       "                                information\n"
 	       " %s status               List interfaces where the XDP program is running\n"
 	       " %s connection           View connection tracking table\n"
 	       " %s reload               Reattaching the XDP program while preserving the loaded rule set\n",
-		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
+		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0],
+		opts.argv[0], opts.argv[0]);
 	return 0;
 }
 
