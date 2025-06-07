@@ -3,6 +3,8 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include <linux/pkt_sched.h>
+#include <linux/pkt_cls.h>
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
@@ -377,11 +379,27 @@ int xdp_rcv(struct xdp_md *ctx)
 {
 	struct xbuf xbuf;
 
-	xbuf_init(ctx, &xbuf);
+	xbuf_xdp_init(ctx, &xbuf);
 	if (!xbuf_check_access(&xbuf, xbuf_ethhdr(&xbuf), ETH_HLEN))
 		return XDP_PASS;
 	
 	return fw_l2_input(&xbuf);
+}
+
+SEC("tc")
+int tc_rcv(struct __sk_buff *skb)
+{
+	struct xbuf xbuf;
+	int ret;
+
+	xbuf_skb_init(skb, &xbuf);
+	if (!xbuf_check_access(&xbuf, xbuf_ethhdr(&xbuf), ETH_HLEN))
+		return TC_ACT_OK;
+
+	ret = fw_l2_input(&xbuf);
+	if (ret == XDP_DROP)
+		return TC_ACT_SHOT;
+	return TC_ACT_OK;
 }
 
 char LICENSE[] SEC("license") = "GPL";

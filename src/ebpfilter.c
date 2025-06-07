@@ -49,12 +49,14 @@ char *maps_to_pin[] = {
 struct {
 	char prog_dir_path[PATH_MAX];
 	char prog_file_name[NAME_MAX];
-	char prog_name[NAME_MAX];
+	char xdp_prog_name[NAME_MAX];
+	char tc_prog_name[NAME_MAX];
 	char pinned_maps_dir[PATH_MAX];
 } cfg = {
 	.prog_dir_path = "/lib/bpf",
 	.prog_file_name = "ebpfilter.xdp.o",
-	.prog_name = "xdp_rcv",
+	.xdp_prog_name = "xdp_rcv",
+	.tc_prog_name = "tc_rcv",
 	.pinned_maps_dir = "/sys/fs/bpf",
 };
 
@@ -138,14 +140,14 @@ int fw_prog_is_attached(int ifindex)
 
 	if (xdp_multiprog__is_legacy(mp)) {
 		prog = xdp_multiprog__main_prog(mp);
-		if (prog && strcmp(xdp_program__name(prog), cfg.prog_name) == 0)
+		if (prog && strcmp(xdp_program__name(prog), cfg.xdp_prog_name) == 0)
 			ret = 1;
 
 		goto out;
 	}
 
 	while ((prog = xdp_multiprog__next_prog(prog, mp))) {
-		if (strcmp(xdp_program__name(prog), cfg.prog_name) == 0) {
+		if (strcmp(xdp_program__name(prog), cfg.xdp_prog_name) == 0) {
 			ret = 1;
 			break;
 		}
@@ -178,7 +180,7 @@ int fw_prog_is_attached(int ifindex)
 	if (ret)
 		return 0;
 
-	if (strcmp(info.name, cfg.prog_name) == 0)
+	if (strcmp(info.name, cfg.xdp_prog_name) == 0)
 		return 1;
 	return 0;
 }
@@ -321,6 +323,45 @@ int fw_maps_pin(struct bpf_object *obj)
 }
 
 void fw_maps_unpin(void);
+
+int fw_tc_prog_deattach(void)
+{
+	DECLARE_LIBBPF_OPTS(bpf_tc_hook, tc_hook, .ifindex = opts.ifindex,
+			    .attach_point = BPF_TC_EGRESS);
+	DECLARE_LIBBPF_OPTS(bpf_tc_opts, tc_opts, .handle = 1, .priority = 1);
+
+	return bpf_tc_detach(&tc_hook, &tc_opts);
+}
+
+int fw_tc_prog_attach(struct bpf_object *obj)
+{
+	struct bpf_program *tc_prog = NULL;
+	DECLARE_LIBBPF_OPTS(bpf_tc_hook, tc_hook, .ifindex = opts.ifindex,
+			    .attach_point = BPF_TC_EGRESS);
+	DECLARE_LIBBPF_OPTS(bpf_tc_opts, tc_opts, .handle = 1, .priority = 1);
+	int ret;
+
+	tc_prog = bpf_object__find_program_by_name(obj, cfg.tc_prog_name);
+	if (!tc_prog) {
+		fprintf(stderr, "Prog \"%s\" not found\n", cfg.tc_prog_name);
+		return -1;
+	}
+	tc_opts.prog_fd = bpf_program__fd(tc_prog);
+	ret = bpf_tc_hook_create(&tc_hook);
+	if (ret && ret != -EEXIST) {
+		fprintf(stderr, "Failed to create TC hook: %s\n", strerror(-ret));
+		return ret;
+	}
+
+	ret = bpf_tc_attach(&tc_hook, &tc_opts);
+	if (ret) {
+		fprintf(stderr, "Failed to create TC hook: %s\n", strerror(-ret));
+		return ret;
+	}
+
+	return 0;
+}
+
 int fw_prog_native_load(void)
 {
 	char xdp_prog_filename[PATH_MAX];
@@ -347,9 +388,9 @@ int fw_prog_native_load(void)
 		goto out;
 	}
 
-	prog = bpf_object__find_program_by_name(obj, cfg.prog_name);
+	prog = bpf_object__find_program_by_name(obj, cfg.xdp_prog_name);
 	if (!prog) {
-		fprintf(stderr, "Prog \"%s\" not found in %s\n", cfg.prog_name, xdp_prog_filename);
+		fprintf(stderr, "Prog \"%s\" not found in %s\n", cfg.xdp_prog_name, xdp_prog_filename);
 		ret = -1;
 		goto out;
 	}
@@ -366,13 +407,22 @@ int fw_prog_native_load(void)
         ret = bpf_set_link_xdp_fd(opts.ifindex, bpf_program__fd(prog), XDP_FLAGS_SKB_MODE | XDP_FLAGS_UPDATE_IF_NOEXIST);
 #endif
 	if (ret < 0) {
-		fprintf(stderr, "Failed to attach program to %s: %s\n", cfg.prog_name, strerror(-ret));
+		fprintf(stderr, "Failed to attach program to %s: %s\n", cfg.xdp_prog_name, strerror(-ret));
 		goto unpin_maps;
 	}
 
+	ret = fw_tc_prog_attach(obj);
+	if (ret < 0)
+		goto unload_xdp_prog;
 out:
 	bpf_object__close(obj);
 	return ret;
+unload_xdp_prog:
+#ifdef HAVE_BPF_XDP_ATTACH
+		return bpf_xdp_detach(opts.ifindex, XDP_FLAGS_SKB_MODE | XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
+#else
+		return bpf_set_link_xdp_fd(opts.ifindex, -1, XDP_FLAGS_UPDATE_IF_NOEXIST);
+#endif
 unpin_maps:
 	fw_maps_unpin();
 	goto out;
@@ -385,9 +435,10 @@ int fw_prog_libxdp_load(void)
 	struct bpf_object *obj;
 	char xdp_prog_filename[PATH_MAX];
 	int ret;
+	enum xdp_attach_mode mode = XDP_MODE_NATIVE;
 
 	snprintf(xdp_prog_filename, sizeof(xdp_prog_filename), "%s/%s", cfg.prog_dir_path, cfg.prog_file_name);
-	prog = xdp_program__open_file(xdp_prog_filename, cfg.prog_name, NULL);
+	prog = xdp_program__open_file(xdp_prog_filename, cfg.xdp_prog_name, NULL);
 	if (!prog) {
 		fprintf(stderr, "Error opening object %s: No such file or directory\n", xdp_prog_filename);
 		return 1;
@@ -400,14 +451,21 @@ int fw_prog_libxdp_load(void)
 		return ret;
 	}
 
-	ret = xdp_program__attach(prog, opts.ifindex, XDP_MODE_NATIVE, 0);
+	ret = xdp_program__attach(prog, opts.ifindex, mode, 0);
 	if (ret == -EOPNOTSUPP) {
-		ret = xdp_program__attach(prog, opts.ifindex, XDP_MODE_SKB, 0);
+		mode = XDP_MODE_SKB;
+		ret = xdp_program__attach(prog, opts.ifindex, mode, 0);
 	}
 	if (ret < 0) {
 		fprintf(stderr, "Can not attach XDP to %s\n", opts.iface);
 		bpf_object__close(obj);
 		return ret;
+	}
+
+	ret = fw_tc_prog_attach(obj);
+	if (ret < 0) {
+		xdp_program__detach(prog, opts.ifindex, mode, 0);
+		return ret;;
 	}
 
 	ret = fw_maps_pin(obj);
@@ -504,8 +562,10 @@ int fw_prog_do_unload(void)
 	struct xdp_multiprog *mp;
 	struct xdp_program *prog = NULL;
 
+	fw_tc_prog_deattach();
+
 	mp = xdp_multiprog__get_from_ifindex(opts.ifindex);
-	if (IS_ERR_OR_NULL(mp))
+	if (libbpf_get_error(mp))
 #ifdef HAVE_BPF_XDP_ATTACH
 		return bpf_xdp_detach(opts.ifindex, XDP_FLAGS_SKB_MODE | XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
 #else
@@ -516,8 +576,8 @@ int fw_prog_do_unload(void)
 		prog = xdp_multiprog__main_prog(mp);
 		if (!prog)
 			goto out;
-		if (strcmp(xdp_program__name(prog), cfg.prog_name)) {
-			fprintf(stderr, "Prog \"%s\" has not been loaded, current prog %s\n", cfg.prog_name, xdp_program__name(prog));
+		if (strcmp(xdp_program__name(prog), cfg.xdp_prog_name)) {
+			fprintf(stderr, "Prog \"%s\" has not been loaded, current prog %s\n", cfg.xdp_prog_name, xdp_program__name(prog));
 			ret = -1;
 			goto out;
 		}
@@ -527,12 +587,13 @@ int fw_prog_do_unload(void)
 	}
 
 	while ((prog = xdp_multiprog__next_prog(prog, mp))) {
-		if (strcmp(xdp_program__name(prog), cfg.prog_name) == 0) {
+		if (strcmp(xdp_program__name(prog), cfg.xdp_prog_name) == 0) {
 			enum xdp_attach_mode mode = xdp_multiprog__attach_mode(mp);
 			xdp_program__detach(prog, opts.ifindex, mode, 0);
 			break;
 		}
 	}
+
 out:
 	xdp_multiprog__close(mp);
 	return ret;
@@ -542,6 +603,7 @@ int fw_prog_do_unload(void)
 {
 	if (opts.mode == XDP_MODE_LIBXDP)
 		return -EOPNOTSUPP;
+	fw_tc_prog_deattach();
 #ifdef HAVE_BPF_XDP_ATTACH
 	return bpf_xdp_detach(opts.ifindex, XDP_FLAGS_SKB_MODE | XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
 #else
