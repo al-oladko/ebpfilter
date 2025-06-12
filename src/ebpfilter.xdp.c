@@ -292,17 +292,15 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 		return XDP_DROP;
 
 	action = fw_do_filter(xbuf, ct, &key);
-	if (action == FW_DROP)
-		ct->need_recheck = 0;
 	fw_do_stat(xbuf, ct->fw_table_genid & 1, ct->fw_rule_num);
-
-	if (action != FW_DROP) {
-		fw_ip_fragment_finish(xbuf);
-		fw_conn_put(ct, &key);
+	if (action == FW_DROP) {
+		ct->need_recheck = 0;
+		return XDP_DROP;
 	}
 
-	if (action == FW_DROP)
-		return XDP_DROP;
+	fw_ip_fragment_finish(xbuf);
+	fw_conn_put(ct, &key);
+
 	return XDP_PASS;
 }
 
