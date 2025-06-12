@@ -18,6 +18,7 @@ struct xbuf {
 	unsigned char		*transport_hdr;
 #endif
 	unsigned char		*payload;
+	__u16			l3proto;
 	__u16			payload_len;
 	__u8			ct_dir;
 	__u8			dpi_processed;

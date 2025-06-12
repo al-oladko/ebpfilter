@@ -17,22 +17,16 @@
 #include <stdbool.h>
 #include <assert.h>
 
+#include "fw_config.h"
 #include "debug.h"
 #include "atomic.h"
 #include "xbuf.h"
-#include "fw_config.h"
+#include "packet.h"
 #include "fw_rule.h"
 #include "tuple.h"
 #include "connection.h"
 #include "dpi.h"
 #include "fragment.h"
-
-#define VLAN_HLEN 4
-
-struct vlan_hdr {
-	__be16 h_vlan_tci;
-	__be16 h_vlan_encap_proto;
-};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -321,9 +315,18 @@ static __always_inline bool fw_check_supported_l4proto(const struct iphdr *ip)
 
 static __always_inline int fw_ip_rcv(struct xbuf *xbuf)
 {
-	struct iphdr *ip = xbuf_ip_hdr(xbuf);
+	struct iphdr *ip;
 	unsigned int ip_len;
+	int ret;
 
+	ret = fw_l2_input(xbuf);
+	if (ret == XDP_DROP)
+		return ret;
+
+	if (xbuf->l3proto != bpf_htons(ETH_P_IP)) 
+		return XDP_PASS;
+
+	ip = xbuf_ip_hdr(xbuf);
 	if (!xbuf_check_access(xbuf, ip, sizeof(*ip)))
 		return XDP_DROP;
 
@@ -351,39 +354,13 @@ static __always_inline int fw_ip_rcv(struct xbuf *xbuf)
 	return fw_packet_filter(xbuf);
 }
 
-static __always_inline int fw_l2_input(struct xbuf *xbuf)
-{
-	struct ethhdr *eth = xbuf_ethhdr(xbuf);
-	__be16 proto = eth->h_proto;
-	__u16 l3_offset = ETH_HLEN;
-
-	if (proto == bpf_htons(ETH_P_8021Q) || proto == bpf_htons(ETH_P_8021AD)) {
-		struct vlan_hdr *vlan = (struct vlan_hdr *)(xbuf_packet_data(xbuf) + ETH_HLEN);
-
-		if (!xbuf_check_access(xbuf, vlan, sizeof(*vlan)))
-			return XDP_PASS;
-
-		proto = vlan->h_vlan_encap_proto;
-		l3_offset += sizeof(*vlan);
-	}
-
-	if (proto != bpf_htons(ETH_P_IP)) 
-		return XDP_PASS;
-
-	xbuf_set_network_hdr(xbuf, l3_offset);
-	return fw_ip_rcv(xbuf);
-}
-
 SEC("xdp")
 int xdp_rcv(struct xdp_md *ctx)
 {
 	struct xbuf xbuf;
 
 	xbuf_xdp_init(ctx, &xbuf);
-	if (!xbuf_check_access(&xbuf, xbuf_ethhdr(&xbuf), ETH_HLEN))
-		return XDP_PASS;
-	
-	return fw_l2_input(&xbuf);
+	return fw_ip_rcv(&xbuf);
 }
 
 SEC("tc")
@@ -393,10 +370,7 @@ int tc_rcv(struct __sk_buff *skb)
 	int ret;
 
 	xbuf_skb_init(skb, &xbuf);
-	if (!xbuf_check_access(&xbuf, xbuf_ethhdr(&xbuf), ETH_HLEN))
-		return TC_ACT_OK;
-
-	ret = fw_l2_input(&xbuf);
+	ret = fw_ip_rcv(&xbuf);
 	if (ret == XDP_DROP)
 		return TC_ACT_SHOT;
 	return TC_ACT_OK;
