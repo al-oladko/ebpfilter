@@ -30,6 +30,7 @@
 #include "fw_dpi.h"
 #include "fw_tuple.h"
 #include "fw_connection.h"
+#include "fw_progtable.h"
 
 #define __unused __attribute__((__unused__))
 
@@ -37,12 +38,14 @@ enum {
 	FW_MAP_RULES = 0,
 	FW_MAP_GENID,
 	FW_MAP_STATS,
+	FW_MAP_PROG_TABLE,
 	FW_MAP_MAX,
 };
 char *maps_to_pin[] = {
 	[FW_MAP_RULES] = "fw_rules_table",
 	[FW_MAP_GENID] = "fw_table_generation",
 	[FW_MAP_STATS] = "fw_stats",
+	[FW_MAP_PROG_TABLE] = "fw_prog_table",
 	[FW_MAP_MAX]   = "",
 };
 
@@ -362,6 +365,34 @@ int fw_tc_prog_attach(struct bpf_object *obj)
 	return 0;
 }
 
+char *fw_prog_table_names[] = {
+	[FW_PROG_TC_NAT] = "tc_nat_dummy",
+};
+int fw_call_table_init(struct bpf_object *obj)
+{
+	struct bpf_program *prog;
+	int map_fd, prog_fd;
+	int key, i;
+
+	map_fd = fw_map_get(FW_MAP_PROG_TABLE);
+	if (map_fd < 0)
+		return map_fd;
+
+	for (i = FW_PROG_CALL_START; i < FW_PROG_CALL_END; i++) {
+		prog = bpf_object__find_program_by_name(obj, fw_prog_table_names[i]);
+		if (!prog) {
+			fprintf(stderr, "Prog \"%s\" not found in %s\n", fw_prog_table_names[i], bpf_object__name(obj));
+			return -1;
+		}
+
+		key = i * 2 + 1;
+		prog_fd = bpf_program__fd(prog);
+		bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
+	}
+
+	return 0;
+}
+
 int fw_prog_native_load(void)
 {
 	char xdp_prog_filename[PATH_MAX];
@@ -400,6 +431,11 @@ int fw_prog_native_load(void)
 		goto out;
 	}
 	//TODO default table
+
+	ret = fw_call_table_init(obj);
+	if (ret < 0) {
+		goto out;
+	}
 
 #ifdef HAVE_BPF_XDP_ATTACH
         ret = bpf_xdp_attach(opts.ifindex, bpf_program__fd(prog), XDP_FLAGS_SKB_MODE | XDP_FLAGS_UPDATE_IF_NOEXIST, NULL);
@@ -460,6 +496,13 @@ int fw_prog_libxdp_load(void)
 		fprintf(stderr, "Can not attach XDP to %s\n", opts.iface);
 		bpf_object__close(obj);
 		return ret;
+	}
+
+	ret = fw_call_table_init(obj);
+	if (ret < 0) {
+		xdp_program__detach(prog, opts.ifindex, mode, 0);
+		bpf_object__close(obj);
+		return ret;;
 	}
 
 	ret = fw_tc_prog_attach(obj);

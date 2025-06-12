@@ -32,3 +32,21 @@ static __always_inline int fw_l2_input(struct xbuf *xbuf)
 	xbuf_set_network_hdr(xbuf, l3_offset);
 	return XDP_PASS;
 }
+
+static __always_inline int fw_ip_rcv_fast(struct xbuf *xbuf)
+{
+	struct iphdr *ip;
+	int ret;
+
+	ret = fw_l2_input(xbuf);
+	if (ret == XDP_DROP)
+		return ret;
+
+	ip = xbuf_ip_hdr(xbuf);
+	if (!xbuf_check_access(xbuf, ip, sizeof(*ip)))
+		return XDP_DROP;
+
+	xbuf_set_transport_hdr(xbuf, ip->ihl * 4);
+
+	return XDP_PASS;
+}
