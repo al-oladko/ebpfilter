@@ -130,6 +130,16 @@ static __always_inline unsigned char *xbuf_get_tail(const struct xbuf *xbuf, int
 	return (unsigned char *)p;
 }
 
+static __always_inline bool xbuf_is_rx(const struct xbuf *xbuf)
+{
+	return xbuf->ctx != NULL;
+}
+
+static __always_inline bool xbuf_is_tx(const struct xbuf *xbuf)
+{
+	return xbuf->skb != NULL;
+}
+
 #ifdef XBUF_USE_OFFSET
 static __always_inline struct iphdr *xbuf_ip_hdr(const struct xbuf *xbuf)
 {
