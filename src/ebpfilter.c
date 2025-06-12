@@ -477,14 +477,18 @@ int fw_prog_libxdp_load(void)
 	prog = xdp_program__open_file(xdp_prog_filename, cfg.xdp_prog_name, NULL);
 	if (!prog) {
 		fprintf(stderr, "Error opening object %s: No such file or directory\n", xdp_prog_filename);
-		return 1;
+		return -1;
 	}
 
 	obj = xdp_program__bpf_obj(prog);
+	if (libbpf_get_error(obj)) {
+		fprintf(stderr, "Failed to load prog: %ld\n", libbpf_get_error(obj));
+		return -1;
+	}
+
 	ret = fw_maps_reuse(obj);
 	if (ret < 0) {
-		bpf_object__close(obj);
-		return ret;
+		goto out;
 	}
 
 	ret = xdp_program__attach(prog, opts.ifindex, mode, 0);
@@ -494,30 +498,29 @@ int fw_prog_libxdp_load(void)
 	}
 	if (ret < 0) {
 		fprintf(stderr, "Can not attach XDP to %s\n", opts.iface);
-		bpf_object__close(obj);
-		return ret;
+		goto out;
 	}
 
 	ret = fw_call_table_init(obj);
 	if (ret < 0) {
-		xdp_program__detach(prog, opts.ifindex, mode, 0);
-		bpf_object__close(obj);
-		return ret;;
+		goto xdp_detach;
 	}
 
 	ret = fw_tc_prog_attach(obj);
 	if (ret < 0) {
-		xdp_program__detach(prog, opts.ifindex, mode, 0);
-		return ret;;
+		goto xdp_detach;
 	}
 
 	ret = fw_maps_pin(obj);
 	if (ret < 0) {
-		bpf_object__close(obj);
-		return ret;
+		goto xdp_detach;
 	}
 	//TODO default table
-	return 0;
+out:
+	return ret;
+xdp_detach:
+	xdp_program__detach(prog, opts.ifindex, mode, 0);
+	goto out;
 }
 #else
 int fw_prog_libxdp_load(void)
