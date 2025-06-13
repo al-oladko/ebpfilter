@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2025 Aleksei Oladko <aleks.oladko@gmail.com>
 #pragma once
 
 static __always_inline __s64 atomic_read(__s64 *v)
