@@ -16,16 +16,3 @@ static __always_inline int fw_bpf_goto(void *ctx, int label)
 	bpf_tail_call(ctx, &fw_prog_table, label);
 	return XDP_PASS;
 }
-
-SEC("tc")
-int tc_nat_dummy(struct __sk_buff *skb)
-{
-	struct xbuf xbuf;
-	int ret;
-
-	xbuf_skb_init(skb, &xbuf);
-	ret = fw_ip_rcv_fast(&xbuf);
-	if (ret == XDP_DROP)
-		return TC_ACT_SHOT;
-	return TC_ACT_OK;
-}

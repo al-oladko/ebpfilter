@@ -140,6 +140,11 @@ static __always_inline bool xbuf_is_tx(const struct xbuf *xbuf)
 	return xbuf->skb != NULL;
 }
 
+static __always_inline int xbuf_get_offset(const struct xbuf *xbuf, void *ptr)
+{
+	return (unsigned char *)ptr - xbuf->data;
+}
+
 #ifdef XBUF_USE_OFFSET
 static __always_inline struct iphdr *xbuf_ip_hdr(const struct xbuf *xbuf)
 {

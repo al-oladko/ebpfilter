@@ -27,6 +27,7 @@
 #include "connection.h"
 #include "dpi.h"
 #include "fragment.h"
+#include "nat.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -287,6 +288,10 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 		return XDP_PASS;
 	}
 
+	ret = fw_nat_input(xbuf, &key);
+	if (ret < 0)
+		return XDP_DROP;
+
 	ct = fw_conn_get(xbuf, &key);
 	if (!ct)
 		return XDP_DROP;
@@ -301,7 +306,7 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 	fw_ip_fragment_finish(xbuf);
 	fw_conn_put(ct, &key);
 
-	return XDP_PASS;
+	return fw_nat_output(xbuf);
 }
 
 static __always_inline bool fw_check_supported_l4proto(const struct iphdr *ip)
