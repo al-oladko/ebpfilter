@@ -1,8 +1,16 @@
 # ebpfilter
 
-**ebpfilter** is an XDP-based stateful firewall with support for L7 (application-layer) traffic filtering using DPI (Deep Packet Inspection). It maintains connection state, so once a session is allowed, packets within that session do not need to be re-evaluated against the rules.
+**ebpfilter** is an eBPF XDP-based stateful firewall with support for L7 (application-layer) traffic filtering using DPI (Deep Packet Inspection). It maintains connection state, so once a session is allowed, packets within that session do not need to be re-evaluated against the rules.
 
 It supports standard L4-level firewall filtering options such as source and destination IP addresses, protocols, and port numbers. L7 protocol detection is performed using a lightweight DPI engine. DPI analysis is independent of destination port, and currently has the following limitation: the L7 protocol must be detected in the first packet carrying payload data.
+
+#### Features
+
+- Stateful session tracking
+- Layer 2–4 packet filtering
+- DPI-based filtering
+- Rate limiting for new sessions
+- Source NAT
 
 ---
 
@@ -169,6 +177,45 @@ This configuration allows:
 * All other traffic will be dropped by default.
 
 ---
+
+## NAT
+
+Currently, only **source NAT** is supported.
+A NAT rule must be defined for a network interface, and the IP address of that interface will be used as the **source IP address** in translated packets.
+
+### Adding a NAT Rule
+
+To add a source NAT rule, use the following command:
+
+```bash
+ebpfilter nat add src-translation IP-address|auto [dev IFNAME]
+```
+
+- If an explicit `IP-address` is given, it will be used as the new source IP.
+- If `auto` is specified, the IP address of the given `IFNAME` interface will be used.
+- If only one XDP program is attached to a single interface, the `dev` parameter is optional — the NAT rule will be applied to that interface.
+
+You can also use a shorthand alias to add a source NAT rule:
+
+```bash
+ebpfilter snat add IP-address|auto [dev IFNAME]
+```
+
+### Flushing NAT Rules
+
+To remove all NAT rules, use:
+
+```bash
+ebpfilter nat flush [dev IFNAME]
+```
+
+### Viewing NAT Rules
+
+To view currently configured NAT rules and their parameters, run:
+
+```bash
+ebpfilter nat show [dev IFNAME]
+```
 
 ## License
 
