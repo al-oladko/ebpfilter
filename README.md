@@ -7,10 +7,11 @@ It supports standard L4-level firewall filtering options such as source and dest
 #### Features
 
 - Stateful session tracking
-- Layer 2–4 packet filtering
+- Layer 3–4 packet filtering
 - DPI-based filtering
 - Rate limiting for new sessions
 - Source NAT
+- Support for IP fragmentation handling (the firewall applies the session policy to all fragments based on the first fragment, as subsequent fragments do not contain the Layer 4 header)
 
 ---
 
@@ -69,8 +70,6 @@ ebpfilter reload [dev <ifname>]
 
 If `<ifname>` is not specified, the program will be reloaded on all interfaces.
 
----
-
 ### View connection
 
 View connection tracking table:
@@ -79,7 +78,9 @@ View connection tracking table:
 ebpfilter connection [dev <ifname>]
 ```
 
-If `<ifname>` is not specified, the program will be reloaded on all interfaces.
+The 5-tuple of the session is displayed, along with the firewall rule that allowed the session and the session's expiration status.
+
+---
 
 ## Managing Rules
 
@@ -183,7 +184,11 @@ This configuration allows:
 Currently, only **source NAT** is supported.
 A NAT rule must be defined for a network interface, and the IP address of that interface will be used as the **source IP address** in translated packets.
 
-### Adding a NAT Rule
+Current NAT limitations:
+- Address translation for IP fragments is not supported.
+- If, after translating the source IP address, the new 5-tuple matches the 5-tuple of another session that is already being NATed, the NAT rule will not be applied.
+
+### Add a NAT Rule
 
 To add a source NAT rule, use the following command:
 
@@ -201,7 +206,7 @@ You can also use a shorthand alias to add a source NAT rule:
 ebpfilter snat add IP-address|auto [dev IFNAME]
 ```
 
-### Flushing NAT Rules
+### Flush NAT Rules
 
 To remove all NAT rules, use:
 
@@ -209,7 +214,7 @@ To remove all NAT rules, use:
 ebpfilter nat flush [dev IFNAME]
 ```
 
-### Viewing NAT Rules
+### View NAT Rules
 
 To view currently configured NAT rules and their parameters, run:
 
