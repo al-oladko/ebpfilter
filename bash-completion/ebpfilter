@@ -1,0 +1,207 @@
+# ebpfilter(8) completion                                         -*- shell-script -*-
+
+_ebpffilter_get_xdp_interfaces() {
+    ip -o link show | while read -r line; do
+        if [[ "$line" =~ xdp ]]; then
+            interface=$(echo "$line" | awk -F': ' '{print $2}' | awk '{print $1}')
+            echo "$interface"
+        fi
+    done
+}
+
+_ebpfilter_interface_addresses() {
+    ip -o -4 addr show | awk '{print $4}' | cut -d/ -f1
+}
+
+_ebpfilter() {
+    local cur prev words cword
+    _init_completion || return
+
+    local commands="load unload reload rule status connection nat snat"
+    case $prev in
+        help)
+            return
+            ;;
+    esac
+
+    case $cur in
+        -*)
+            local c="-v"
+            COMPREPLY=($(compgen -W "$c" -- "$cur"))
+	    return
+            ;;
+    esac
+    if [[ ${cword} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "${commands}" -- ${cur}) )
+        return 0
+    fi
+    local i cmd subcmd
+    for ((i=1; i<${#words[@]} - 1; i++)); do
+        word="${words[$i]}"
+        if [[ "$word" != -* ]]; then
+            if [[ -v cmd ]]; then
+                subcmd="$word"
+                break
+            else
+                cmd="$word"
+            fi
+        fi
+    done
+    if [[ ! -v cmd ]]; then
+        COMPREPLY=( $(compgen -W "${commands}" -- ${cur}) )
+        return 0
+    fi
+    local actions="accept drop"
+    local xdp_ifaces=$(_ebpffilter_get_xdp_interfaces)
+    case $cmd in
+        u | unload | re | reload | c | connection)
+            if [[ "$prev" == "dev" ]]; then
+                COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                return 0
+            fi
+            if (( $cword == $i )); then
+                COMPREPLY=( $(compgen -W "dev" -- ${cur}) )
+                return 0
+            fi
+            return 0
+            ;;
+        n | nat)
+            if [[ ! -v subcmd ]]; then
+                COMPREPLY=( $(compgen -W "add flush show help" -- ${cur}) )
+                return 0
+            fi
+            case $subcmd in
+                add)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "set-ip" ]]; then
+                        COMPREPLY=( $(compgen -W "$(_ebpfilter_interface_addresses) auto" -- ${cur}) )
+                        return 0
+                    fi
+                    local c="src-translation set-ip dev"
+                    COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+                    ;;
+                s| show | f | flush)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    COMPREPLY=( $(compgen -W "dev" -- ${cur}) )
+                    return 0
+                    ;;
+            esac
+            ;;
+        sn | snat)
+            if [[ ! -v subcmd ]]; then
+                COMPREPLY=( $(compgen -W "add" -- ${cur}) )
+                return 0
+            fi
+            case $subcmd in
+                add)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "set-ip" ]]; then
+                        COMPREPLY=( $(compgen -W "$(_ebpfilter_interface_addresses) auto" -- ${cur}) )
+                        return 0
+                    fi
+                    COMPREPLY=( $(compgen -W "set-ip dev" -- ${cur}) )
+                    ;;
+            esac
+            ;;
+        s | status)
+            if [[ "$prev" == "dev" ]]; then
+                _available_interfaces
+                return 0
+            fi
+            if (( $cword == $i )); then
+                COMPREPLY=( $(compgen -W "dev" -- ${cur}) )
+                return 0
+            fi
+            return 0
+            ;;
+        l | load)
+            if [[ "$prev" == "dev" ]]; then
+                _available_interfaces
+                return 0
+            fi
+            local c="apply-rules dev"
+            COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+            return 0
+            ;;
+        r | rule)
+            if [[ ! -v subcmd ]]; then
+                local c="help add del flush show set"
+                COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+                return 0
+            fi
+            case $subcmd in
+                add)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "service" ]]; then
+                        COMPREPLY=( $(compgen -W "http tls dns ssh ping" -- ${cur}) )
+                        return 0
+                    fi
+		    if [[ "$prev" == "action" ]]; then
+                        COMPREPLY=( $(compgen -W "${actions}" -- ${cur}) )
+                        return 0
+                    fi
+		    local silent="src dst port src-port connlimit"
+		    if [[ " $silent " == *" $prev "* ]]; then
+                        return 0
+                    fi
+                    local service="http tls dns ssh ping"
+                    local protos="tcp udp icmp"
+                    local c="src dst port src-port service connlimit dev action"
+                    local j proto
+                    for ((j=$i; j<${#words[@]} - 1; j++)); do
+                        word="${words[$j]}"
+                        if [[ " $protos " == *" $word "* ]]; then
+                            proto=1
+                        fi
+                        c=$(echo "$c" | sed -E "s/(^| )$word( |$)/ /g")
+                    done
+                    if [[ ! -v proto ]]; then
+                        c="${c} ${protos}"
+                    fi
+                    COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+                    ;;
+                s| show | d | del | delete | f | flush)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    local c="dev"
+                    COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+                    return 0
+                    ;;
+                se | set)
+                    if (( $cword == $i+1 )); then
+                        COMPREPLY=( $(compgen -W "default" -- ${cur}) )
+                        return 0
+                    fi
+		    if (( $cword == $i+2 )) && [[ "$prev" == "default" ]]; then
+                        COMPREPLY=( $(compgen -W "${actions}" -- ${cur}) )
+                        return 0
+                    fi
+		    if (( $cword == $i+3 )) && [[ " $actions " == *" $prev "* ]]; then
+                        COMPREPLY=( $(compgen -W "dev" -- ${cur}) )
+                        return 0
+                    fi
+		    if (( $cword == $i+4 )) && [[ "$prev" == "dev" ]]; then
+                        _available_interfaces
+                        return 0
+                    fi
+                    return 0
+                    ;;
+            esac
+            ;;
+    esac
+} &&
+complete -F _ebpfilter ebpfilter

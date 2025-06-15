@@ -37,7 +37,7 @@ clean:
 	rm -f $(XDP_PROG_OBJ) $(USER_APP)
 
 install: all
-	install -D -m 0755 $(USER_APP) $(DESTDIR)$(INSTALL_SBIN)/$(LOADER_BIN)
+	install -D -m 0755 $(USER_APP) $(DESTDIR)$(INSTALL_SBIN)/
 	install -D -m 0644 $(XDP_PROG_OBJ)     $(DESTDIR)$(INSTALL_BPF)/$(XDP_PROG_OBJ)
 
 .PHONY: all clean install
