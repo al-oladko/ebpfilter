@@ -71,7 +71,7 @@ _ebpfilter() {
                 return 0
             fi
             case $subcmd in
-                add)
+                a | dd)
                     if [[ "$prev" == "dev" ]]; then
                         COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
                         return 0
@@ -99,7 +99,7 @@ _ebpfilter() {
                 return 0
             fi
             case $subcmd in
-                add)
+                a | add)
                     if [[ "$prev" == "dev" ]]; then
                         COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
                         return 0
@@ -139,7 +139,7 @@ _ebpfilter() {
                 return 0
             fi
             case $subcmd in
-                add)
+                a | add)
                     if [[ "$prev" == "dev" ]]; then
                         COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
                         return 0
@@ -172,7 +172,7 @@ _ebpfilter() {
                     fi
                     COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
                     ;;
-                s| show | d | del | delete | f | flush)
+                s | show | d | del | delete | f | flush)
                     if [[ "$prev" == "dev" ]]; then
                         COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
                         return 0
