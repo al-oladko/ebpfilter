@@ -193,7 +193,7 @@ Current NAT limitations:
 To add a source NAT rule, use the following command:
 
 ```bash
-ebpfilter nat add src-translation IP-address|auto [dev IFNAME]
+ebpfilter nat add src-translation set-ip IP-address|auto [dev IFNAME]
 ```
 
 - If an explicit `IP-address` is given, it will be used as the new source IP.
@@ -203,7 +203,7 @@ ebpfilter nat add src-translation IP-address|auto [dev IFNAME]
 You can also use a shorthand alias to add a source NAT rule:
 
 ```bash
-ebpfilter snat add IP-address|auto [dev IFNAME]
+ebpfilter snat add set-ip IP-address|auto [dev IFNAME]
 ```
 
 ### Flush NAT Rules
