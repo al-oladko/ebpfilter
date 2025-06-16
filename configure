@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CONFIG_H=src/fw_config.h
+CONFIG_H=src/include/fw_config.h
 BUILD_CONF=build.conf
 : > "$CONFIG_H"
 : > "$BUILD_CONF"

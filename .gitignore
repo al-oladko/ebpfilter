@@ -1,4 +1,5 @@
 *.swp
 build.conf
-src/ebpfilter
+src/ebpfilter/ebpfilter
 *.o
+*.d
