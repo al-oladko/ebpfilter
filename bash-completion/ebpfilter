@@ -112,17 +112,6 @@ _ebpfilter() {
                     ;;
             esac
             ;;
-        s | status)
-            if [[ "$prev" == "dev" ]]; then
-                _available_interfaces
-                return 0
-            fi
-            if (( $cword == $i )); then
-                COMPREPLY=( $(compgen -W "dev" -- ${cur}) )
-                return 0
-            fi
-            return 0
-            ;;
         l | load)
             if [[ "$prev" == "dev" ]]; then
                 _available_interfaces
@@ -165,7 +154,9 @@ _ebpfilter() {
                         if [[ " $protos " == *" $word "* ]]; then
                             proto=1
                         fi
-                        c=$(echo "$c" | sed -E "s/(^| )$word( |$)/ /g")
+                        if [[ " $c " == *" $word "* ]]; then
+                            c=$(echo "$c" | sed -E "s/(^| )$word( |$)/ /g")
+                        fi
                     done
                     if [[ ! -v proto ]]; then
                         c="${c} ${protos}"
