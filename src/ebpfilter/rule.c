@@ -225,6 +225,7 @@ static int fw_get_ip(struct ip_addr *ip, char *arg)
 			fprintf(stderr, "Invalid host/subnet '%s'\n", arg);
 			return -1;
 		}
+		mask_str--;
 		*mask_str = 0;
 		if (mask_len < 32)
 			mask = ((1U << mask_len) - 1) << (32 - mask_len);
@@ -297,7 +298,7 @@ static int fw_rule_add(int argc, char **argv)
 			}
 			ret = fw_get_ip(&rule.src, *argv);
 			if (ret < 0)
-				break;
+				return -1;
 			goto next;
 		}
 		if (strcmp("dst", *argv) == 0) {
@@ -309,7 +310,7 @@ static int fw_rule_add(int argc, char **argv)
 			}
 			ret = fw_get_ip(&rule.dst, *argv);
 			if (ret < 0)
-				break;
+				return -1;
 			goto next;
 		}
 		if (strcmp("action", *argv) == 0) {
