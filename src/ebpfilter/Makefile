@@ -2,6 +2,7 @@ CLANG = clang
 CFLAGS = -O2 -Wall -Wextra -MMD -MP
 LDFLAGS = -lbpf
 
+ROOT_DIR ?= $(CURDIR)/../..
 -include $(ROOT_DIR)/build.conf
 
 ifeq (1,$(HAVE_LIBXDP))
@@ -11,24 +12,36 @@ endif
 ifeq (1,$(HAVE_BPF_XDP_ATTACH))
 CFLAGS += -DHAVE_BPF_XDP_ATTACH
 endif
+SRC_DIR ?= $(CURDIR)/..
+EBPF_DIR ?= $(CURDIR)
 INCLUDE_OPTS := -I$(EBPF_DIR) -I$(SRC_DIR)/include
-SRC_DIR ?= $(CURDIR)
-
+SOURCES := $(wildcard *.c)
+OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 INSTALL_SBIN := /usr/sbin
+
+DEPDIR := $(EBPF_DIR)/.deps
+DEPS := $(patsubst %.c,$(DEPDIR)/%.d,$(SOURCES))
 
 USER_APP = ebpfilter
 
--include ebpfilter.d
+all: depdir $(USER_APP)
 
-all: $(USER_APP)
+depdir:
+	@mkdir -p $(DEPDIR)
 
-$(USER_APP): $(USER_APP).c
-	$(CLANG) $(CFLAGS) $(INCLUDE_OPTS) -o $@ $< $(LDFLAGS)
+$(USER_APP): $(OBJECTS)
+	$(CLANG) $^ -o $@ $(LDFLAGS)
+
+%.o: %.c
+	$(CLANG) $(INCLUDE_OPTS) $(CFLAGS) -c $< -o $@
+	@mv $(basename $@).d $(DEPDIR)/$(notdir $(basename $@)).d
+
+-include $(DEPS)
 
 clean:
-	rm -f $(USER_APP) ebpfilter.d
+	rm -f $(USER_APP) $(OBJECTS) $(DEPS)
 
 install: all
 	install -D -m 0755 $(USER_APP) $(DESTDIR)$(INSTALL_SBIN)/
 
-.PHONY: all clean install
+.PHONY: all depdir clean install
