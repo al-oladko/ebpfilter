@@ -258,7 +258,7 @@ static char *srv_list[DPI_PROTO_MAX] = {
 static int fw_rule_add(int argc, char **argv)
 {
 	int ret;
-	int rule_num, next_port, action_f = 0;
+	int rule_num, action_f = 0;
 	struct rule rule;
 
 	if (!argc) {
@@ -336,16 +336,18 @@ static int fw_rule_add(int argc, char **argv)
 		}
 		if (strcmp("tcp", *argv) == 0) {
 			rule.protocol = IPPROTO_TCP;
-			next_port = 1;
-			goto next_port;
+			goto next;
 		}
 		if (strcmp("udp", *argv) == 0) {
 			rule.protocol = IPPROTO_UDP;
-			next_port = 1;
-			goto next_port;
+			goto next;
 		}
 		if (strcmp("port", *argv) == 0) {
-			if (!next_port || rule.dport) {
+			if (rule.dport) {
+				fprintf(stderr, "Only one 'port' allower.\n");
+				return -1;
+			}
+			if (rule.protocol != IPPROTO_TCP && rule.protocol != IPPROTO_UDP) {
 				fprintf(stderr, "Port number can only be specified if TCP or UDP protocol is selected.\n");
 				return -1;
 			}
@@ -361,10 +363,14 @@ static int fw_rule_add(int argc, char **argv)
 				return -1;
 			}
 			rule.dport = htons(ret);
-			goto next_port;
+			goto next;
 		}
 		if (strcmp("src-port", *argv) == 0) {
-			if (!next_port || rule.sport) {
+			if (rule.sport) {
+				fprintf(stderr, "Only one 'src-port' allower.\n");
+				return -1;
+			}
+			if (rule.protocol != IPPROTO_TCP && rule.protocol != IPPROTO_UDP) {
 				fprintf(stderr, "Port number can only be specified if TCP or UDP protocol is selected.\n");
 				return -1;
 			}
@@ -380,7 +386,20 @@ static int fw_rule_add(int argc, char **argv)
 				return -1;
 			}
 			rule.sport = htons(ret);
-			goto next_port;
+			goto next;
+		}
+		if (strcmp("dev", *argv) == 0) {
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Option 'dev' requires an argument\n");
+				return -1;
+			}
+			argv++;
+			ret = parse_dev(*argv);
+			if (ret < 0) {
+				return -1;
+			}
+			goto next;
 		}
 		if (strcmp("service", *argv) == 0) {
 			argv++;
@@ -499,8 +518,6 @@ static int fw_rule_add(int argc, char **argv)
 		fprintf(stderr,"Unknown option '%s'\n", *argv);
 		return -1;
 next:
-		next_port = 0;
-next_port:
 		argc--;
 		argv++;
 	}
