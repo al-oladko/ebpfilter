@@ -128,47 +128,24 @@ out_close_gen:
 	return ret;
 }
 
-static int fw_policy_update(struct rule *rule)
+static int fw_convert_rule(struct rule *rule, struct fw_rule *frule)
 {
-	struct fw_rule_set set;
-	struct fw_rule frule;
-	int ret, gen_id, i;
-
-	ret = fw_policy_get(&set, &gen_id);
-	if (ret < 0)
-		return ret;
-	if (rule->rule_num) {
-		/* index in array */
-		rule->rule_num--;
-		if (rule->rule_num > set.num) {
-			fprintf(stderr, "Index of insertion too big. Maximum allowed value is %d\n", set.num);
-			return -1;
-		}
-	} else {
-		/* add the rule to the buttom */
-		rule->rule_num = set.num;
-	}
-	if (set.num + 1 >= FW_MAX_RULES) {
-		fprintf(stderr, "Maximum number of rules reached.\n");
-		return -1;
-	}
-	set.num++;
-	memset(&frule, 0, sizeof(frule));
+	memset(frule, 0, sizeof(*frule));
 	if (rule->src.ip) {
-		frule.saddr = rule->src.ip;
-		frule.smask = rule->src.mask;
+		frule->saddr = rule->src.ip;
+		frule->smask = rule->src.mask;
 	}
 	if (rule->dst.ip) {
-		frule.daddr = rule->dst.ip;
-		frule.dmask = rule->dst.mask;
+		frule->daddr = rule->dst.ip;
+		frule->dmask = rule->dst.mask;
 	}
 	if (rule->protocol) {
-		frule.protocol = rule->protocol;
-		frule.sport = rule->sport;
-		frule.dport = rule->dport;
+		frule->protocol = rule->protocol;
+		frule->sport = rule->sport;
+		frule->dport = rule->dport;
 	}
 	if (rule->l7protocol) {
-		struct rule_l7 *drule = (struct rule_l7 *)&frule.params[0];
+		struct rule_l7 *drule = (struct rule_l7 *)&frule->params[0];
 
 		drule->type = FW_RULE_PARAM_L7_PROTOCOL;
 		drule->protocol = rule->l7protocol;
@@ -178,8 +155,8 @@ static int fw_policy_update(struct rule *rule)
 		struct connlimit *cl = NULL;
 
 		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
-			if (frule.params[j].type == FW_RULE_PARAM_NONE) {
-				cl = (struct connlimit *)&frule.params[j];
+			if (frule->params[j].type == FW_RULE_PARAM_NONE) {
+				cl = (struct connlimit *)&frule->params[j];
 				break;
 			}
 		}
@@ -195,12 +172,58 @@ static int fw_policy_update(struct rule *rule)
 		}
 		cl->type = FW_RULE_PARAM_CONNLIMIT;
 	}
-	frule.action = rule->action;
+	frule->action = rule->action;
 
-	for (i = set.num; i > rule->rule_num; i--) {
-		set.rules[i] = set.rules[i - 1];
+	return 0;
+}
+
+static int fw_rule_set_add(struct fw_rule_set *set, struct rule *rule)
+{
+	struct fw_rule frule;
+	int ret, i;
+
+	if (rule->rule_num) {
+		/* index in array */
+		rule->rule_num--;
+		if (rule->rule_num > set->num) {
+			fprintf(stderr, "Index of insertion too big. Maximum allowed value is %d\n", set->num);
+			return -1;
+		}
+	} else {
+		/* add the rule to the buttom */
+		rule->rule_num = set->num;
 	}
-	set.rules[rule->rule_num] = frule;
+	if (set->num + 1 >= FW_MAX_RULES) {
+		fprintf(stderr, "Maximum number of rules reached.\n");
+		return -1;
+	}
+	set->num++;
+
+	ret = fw_convert_rule(rule, &frule);
+	if (ret < 0)
+		return ret;
+
+	for (i = set->num; i > rule->rule_num; i--) {
+		set->rules[i] = set->rules[i - 1];
+	}
+	set->rules[rule->rule_num] = frule;
+
+	return 0;
+}
+
+static int fw_policy_update(struct rule *rule)
+{
+	struct fw_rule_set set;
+	int ret, gen_id;
+
+	ret = fw_policy_get(&set, &gen_id);
+	if (ret < 0)
+		return ret;
+
+	ret = fw_rule_set_add(&set, rule);
+	if (ret < 0)
+		return ret;
+
 	fw_policy_set(&set, &gen_id);
 
 	return 0;
@@ -255,25 +278,19 @@ static bool is_number(const char *str)
 static char *srv_list[DPI_PROTO_MAX] = {
 	"-", "ssh", "http", "dns", "tls", "unk"
 };
-static int fw_rule_add(int argc, char **argv)
+static int fw_build_rule(struct rule *rule, int argc, char **argv)
 {
 	int ret;
 	int rule_num, action_f = 0;
-	struct rule rule;
 
-	if (!argc) {
-		fprintf(stderr, "Command 'rule add' requires arguments\n");
-		return -1;
-	}
-
-	memset(&rule, 0, sizeof(rule));
+	memset(rule, 0, sizeof(*rule));
 	rule_num = atoi(*argv);
 	if (rule_num < 0 || rule_num > FW_MAX_RULES) {
 		fprintf(stderr, "Rule number must be positive and not exceed %d\n", FW_MAX_RULES);
 		return -1;
 	}
 	if (rule_num) {
-		rule.rule_num = rule_num;
+		rule->rule_num = rule_num;
 		argv++;
 		argc--;
 	}
@@ -285,8 +302,8 @@ static int fw_rule_add(int argc, char **argv)
 				fprintf(stderr, "Option 'name' requires an argument\n");
 				return -1;
 			}
-			strncpy(rule.name, *argv, RULE_NAME_LEN - 1);
-			rule.name[RULE_NAME_LEN - 1] = 0;
+			strncpy(rule->name, *argv, RULE_NAME_LEN - 1);
+			rule->name[RULE_NAME_LEN - 1] = 0;
 			goto next;
 		}
 		if (strcmp("src", *argv) == 0) {
@@ -296,7 +313,7 @@ static int fw_rule_add(int argc, char **argv)
 				fprintf(stderr, "Option 'src' requires an argument\n");
 				return -1;
 			}
-			ret = fw_get_ip(&rule.src, *argv);
+			ret = fw_get_ip(&rule->src, *argv);
 			if (ret < 0)
 				return -1;
 			goto next;
@@ -308,7 +325,7 @@ static int fw_rule_add(int argc, char **argv)
 				fprintf(stderr, "Option 'dst' requires an argument\n");
 				return -1;
 			}
-			ret = fw_get_ip(&rule.dst, *argv);
+			ret = fw_get_ip(&rule->dst, *argv);
 			if (ret < 0)
 				return -1;
 			goto next;
@@ -322,32 +339,32 @@ static int fw_rule_add(int argc, char **argv)
 			}
 			action_f = 1;
 			if (strcmp("drop", *argv) == 0) {
-				rule.action = FW_DROP;
+				rule->action = FW_DROP;
 				goto next;
 			} else 
 			if (strcmp("accept", *argv) == 0) {
-				rule.action = FW_PASS;
+				rule->action = FW_PASS;
 				goto next;
 			}
 		}
 		if (strcmp("icmp", *argv) == 0) {
-			rule.protocol = IPPROTO_ICMP;
+			rule->protocol = IPPROTO_ICMP;
 			goto next;
 		}
 		if (strcmp("tcp", *argv) == 0) {
-			rule.protocol = IPPROTO_TCP;
+			rule->protocol = IPPROTO_TCP;
 			goto next;
 		}
 		if (strcmp("udp", *argv) == 0) {
-			rule.protocol = IPPROTO_UDP;
+			rule->protocol = IPPROTO_UDP;
 			goto next;
 		}
 		if (strcmp("port", *argv) == 0) {
-			if (rule.dport) {
+			if (rule->dport) {
 				fprintf(stderr, "Only one 'port' allower.\n");
 				return -1;
 			}
-			if (rule.protocol != IPPROTO_TCP && rule.protocol != IPPROTO_UDP) {
+			if (rule->protocol != IPPROTO_TCP && rule->protocol != IPPROTO_UDP) {
 				fprintf(stderr, "Port number can only be specified if TCP or UDP protocol is selected.\n");
 				return -1;
 			}
@@ -362,15 +379,15 @@ static int fw_rule_add(int argc, char **argv)
 				fprintf(stderr, "Invalid port number '%s'.\n", *argv);
 				return -1;
 			}
-			rule.dport = htons(ret);
+			rule->dport = htons(ret);
 			goto next;
 		}
 		if (strcmp("src-port", *argv) == 0) {
-			if (rule.sport) {
+			if (rule->sport) {
 				fprintf(stderr, "Only one 'src-port' allower.\n");
 				return -1;
 			}
-			if (rule.protocol != IPPROTO_TCP && rule.protocol != IPPROTO_UDP) {
+			if (rule->protocol != IPPROTO_TCP && rule->protocol != IPPROTO_UDP) {
 				fprintf(stderr, "Port number can only be specified if TCP or UDP protocol is selected.\n");
 				return -1;
 			}
@@ -385,7 +402,7 @@ static int fw_rule_add(int argc, char **argv)
 				fprintf(stderr, "Invalid port number '%s'.\n", *argv);
 				return -1;
 			}
-			rule.sport = htons(ret);
+			rule->sport = htons(ret);
 			goto next;
 		}
 		if (strcmp("dev", *argv) == 0) {
@@ -409,24 +426,24 @@ static int fw_rule_add(int argc, char **argv)
 				return -1;
 			}
 			if (strcmp("ping", *argv) == 0) {
-				if (rule.protocol && rule.protocol != IPPROTO_ICMP) {
+				if (rule->protocol && rule->protocol != IPPROTO_ICMP) {
 					fprintf(stderr, "Ping service cannot be specified when TCP or UDP protocol is selected.\n");
 					return -1;
 				}
-				rule.protocol = IPPROTO_ICMP;
-				rule.icmp_type = ICMP_ECHO;
+				rule->protocol = IPPROTO_ICMP;
+				rule->icmp_type = ICMP_ECHO;
 			} else
 			if (strcmp("tls", *argv) == 0) {
-				rule.l7protocol = DPI_PROTO_TLS;
+				rule->l7protocol = DPI_PROTO_TLS;
 			} else
 			if (strcmp("ssh", *argv) == 0) {
-				rule.l7protocol = DPI_PROTO_SSH;
+				rule->l7protocol = DPI_PROTO_SSH;
 			} else
 			if (strcmp("http", *argv) == 0) {
-				rule.l7protocol = DPI_PROTO_HTTP;
+				rule->l7protocol = DPI_PROTO_HTTP;
 			} else
 			if (strcmp("dns", *argv) == 0) {
-				rule.l7protocol = DPI_PROTO_DNS;
+				rule->l7protocol = DPI_PROTO_DNS;
 			} else {
 				int j, smax = DPI_PROTO_MAX - 1;
 				fprintf(stderr, "Unknown or unsupported service: %s\n", *argv);
@@ -510,9 +527,9 @@ static int fw_rule_add(int argc, char **argv)
 				fprintf(stderr, "Error: the specified rate is too high and is not supported\n");
 				return -1;
 			}
-			rule.ct_cost = ct_cost;
-			rule.tick_cost = tick_cost;
-			rule.connlimit_budget = ct_cost * ct_limit;
+			rule->ct_cost = ct_cost;
+			rule->tick_cost = tick_cost;
+			rule->connlimit_budget = ct_cost * ct_limit;
 			goto next;
 		}
 		fprintf(stderr,"Unknown option '%s'\n", *argv);
@@ -527,6 +544,20 @@ next:
 		return -1;
 	}
 
+	return 0;
+}
+
+static int fw_rule_add(int argc, char **argv)
+{
+	struct rule rule;
+
+	if (!argc) {
+		fprintf(stderr, "Command 'rule add' requires arguments\n");
+		return -1;
+	}
+
+	if (fw_build_rule(&rule, argc, argv) < 0)
+		return -1;
 	if (fw_opts_check_and_get_dev() < 0) {
 		return -1;
 	}
@@ -679,12 +710,11 @@ static void fw_print_stat(uint64_t value)
 	printf("%6s", str);
 }
 
-static int fw_rule_show(int argc, char **argv)
+static int fw_rule_set_show(const struct fw_rule_set *set, int set_id, bool show_stats)
 {
 	int stat_fd;
-	struct fw_rule_set set;
 	int ret;
-	int gen_id, set_id;
+	int gen_id;
 	int i;
 	struct fw_rule_stats *stats;
 	int ncpus;
@@ -693,44 +723,36 @@ static int fw_rule_show(int argc, char **argv)
 		[FW_DROP] = "drop",
 	};
 
-	ret = fw_try_set_dev(argc, argv);
-	if (ret < 0) {
-		fw_rule_help(0, NULL);
-		return -1;
+	if (show_stats) {
+		ret = -1;
+		ncpus = libbpf_num_possible_cpus();
+		if (ncpus < 0) {
+			fprintf(stderr, "Internal error. Please try again.\n");
+			return ncpus;
+		}
+		stats = malloc(sizeof(*stats) * ncpus);
+		if (!stats) {
+			fprintf(stderr, "Internal error. Please try again.\n");
+			return -1;
+		}
+
+		stat_fd = fw_map_get(FW_MAP_STATS);
+		if (stat_fd < 0) {
+			free(stats);
+			return -1;
+		}
 	}
 
-	ret = fw_policy_get(&set, &gen_id);
-	if (ret < 0) {
-		fprintf(stderr, "Error while getting policy.\n");
-		return ret;
-	}
-	set_id = gen_id % 2;
-
-	ret = -1;
-	ncpus = libbpf_num_possible_cpus();
-	if (ncpus < 0) {
-		fprintf(stderr, "Internal error. Please try again.\n");
-		return ncpus;
-	}
-	stats = malloc(sizeof(*stats) * ncpus);
-	if (!stats) {
-		fprintf(stderr, "Internal error. Please try again.\n");
-		return -1;
-	}
-
-	stat_fd = fw_map_get(FW_MAP_STATS);
-	if (stat_fd < 0) {
-		free(stats);
-		return -1;
-	}
-
+	if (show_stats)
 	printf("   name                 src                dst proto   l7  action  pkts bytes  additional params\n");
-	for (i = 0; i < set.num+1; i++) {
-		struct fw_rule *rule = &set.rules[i];
+	else
+	printf("   name                 src                dst proto   l7  action  additional params\n");
+	for (i = 0; i < set->num+1; i++) {
+		const struct fw_rule *rule = &set->rules[i];
 		unsigned int l7 = 0;
 		int j;
 
-		if (i == set.num)
+		if (i == set->num)
 			printf("default:");
 		else
 			printf("%2d rule:", i + 1);
@@ -755,18 +777,20 @@ static int fw_rule_show(int argc, char **argv)
 			goto out;
 		}
 
-		gen_id = set_id * FW_MAX_RULES + i;
-		ret = bpf_map_lookup_elem(stat_fd, &gen_id, stats);
-		if (ret == 0) {
-			int j;
-			struct fw_rule_stats s = {0, 0};
+		if (show_stats) {
+			gen_id = set_id * FW_MAX_RULES + i;
+			ret = bpf_map_lookup_elem(stat_fd, &gen_id, stats);
+			if (ret == 0) {
+				int j;
+				struct fw_rule_stats s = {0, 0};
 
-			for (j = 0; j < ncpus; j++) {
-				s.packets += stats[j].packets;
-				s.bytes += stats[j].bytes;
+				for (j = 0; j < ncpus; j++) {
+					s.packets += stats[j].packets;
+					s.bytes += stats[j].bytes;
+				}
+				fw_print_stat(s.packets);
+				fw_print_stat(s.bytes);
 			}
-			fw_print_stat(s.packets);
-			fw_print_stat(s.bytes);
 		}
 
 		if (rule->protocol == IPPROTO_ICMP) {
@@ -802,9 +826,32 @@ static int fw_rule_show(int argc, char **argv)
 
 	ret = 0;
 out:
-	close(stat_fd);
-	free(stats);
+	if (show_stats) {
+		close(stat_fd);
+		free(stats);
+	}
 	return ret;
+}
+
+static int fw_rule_show(int argc, char **argv)
+{
+	struct fw_rule_set set;
+	int ret;
+	int gen_id;
+
+	ret = fw_try_set_dev(argc, argv);
+	if (ret < 0) {
+		fw_rule_help(0, NULL);
+		return -1;
+	}
+
+	ret = fw_policy_get(&set, &gen_id);
+	if (ret < 0) {
+		fprintf(stderr, "Error while getting policy.\n");
+		return ret;
+	}
+
+	return fw_rule_set_show(&set, gen_id % 2, true);
 }
 
 static struct cmd rule_cmds[] = {
