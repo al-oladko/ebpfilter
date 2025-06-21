@@ -24,6 +24,76 @@ char *protos[IPPROTO_RAW] = {
 	[IPPROTO_UDP]	= "udp",
 };
 
+int fwlib_file_line_parse(FILE *f, void *ctx, int (*cb)(void *, int, char **))
+{
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+	char *argv[MAX_RULE_WORDS];
+	int argc = 0;
+	int ret;
+
+	while ((read = getline(&line, &len, f)) != -1) {
+		int j;
+		int word = 0;
+		int q = 0;
+
+		if (line[0] == '#')
+			continue;
+		argc = 0;
+		for (j = 0; j < read; j++) {
+			if (line[j] == '"') {
+				if (q) {
+					q = 0;
+					line[j] = 0;
+					continue;
+				}
+				q = 1;
+				word = 1;
+				if (argc >= MAX_RULE_WORDS) {
+					fprintf(stderr, "Error: malformed input file\n");
+					return -1;
+				}
+				argv[argc++] = &line[j+1];
+				continue;
+			}
+			if (q)
+				continue;
+			if (line[j] == '\n') {
+				line[j] = 0;
+			}
+			if (line[j] == ' ') {
+				line[j] = 0;
+				word = 0;
+				continue;
+			}
+			if (!word) {
+				if (argc >= MAX_RULE_WORDS) {
+					fprintf(stderr, "Error: malformed input file\n");
+					return -1;
+				}
+				argv[argc++] = &line[j];
+			}
+			word = 1;
+		}
+
+		ret = cb(ctx, argc, argv);
+		if (ret < 0)
+			goto out;
+		if (ret == 1) {
+			ret = 0;
+			goto out;
+		}
+	}
+
+	ret = 0;
+	if (read == -1)
+		ret = -1;
+out:
+	free(line);
+	return ret;
+}
+
 #ifdef HAVE_LIBXDP
 static int fw_prog_is_attached(int ifindex)
 {
@@ -162,10 +232,10 @@ int fw_try_set_dev(int argc, char **argv)
 	return 0;
 }
 
-void fw_print_ip(__be32 addr, __be32 mask, int width)
+char *fw_ip_str(__be32 addr, __be32 mask)
 {
-	char str[32] = "any";
-	char format[8];
+	static char str[32];
+
 	if (addr) {
 		int mask_len = __builtin_popcount(mask);
 		struct in_addr in = {
@@ -175,8 +245,16 @@ void fw_print_ip(__be32 addr, __be32 mask, int width)
 			snprintf(str, sizeof(str), "%s/%d", inet_ntoa(in), mask_len);
 		else
 			snprintf(str, sizeof(str), "%s", inet_ntoa(in));
+		return str;
 	}
+	return "any";
+}
+
+void fw_print_ip(__be32 addr, __be32 mask, int width)
+{
+	char format[8];
+
 	snprintf(format, sizeof(format), "%%%ds", width);
-	printf(format, str);
+	printf(format, fw_ip_str(addr, mask));
 }
 

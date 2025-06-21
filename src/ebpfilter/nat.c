@@ -19,11 +19,13 @@
 #include <xdp/libxdp.h>
 #endif
 #include <sys/ioctl.h>
+#include <yaml.h>
 
 #include "ebpfilter.h"
 #include "lib.h"
 #include "map.h"
 #include "nat.h"
+#include "policy.h"
 
 #include "fw_progtable.h"
 #include "fw_nat.h"
@@ -215,20 +217,33 @@ static int fw_snat_add(int argc, char **argv)
 	return fw_do_nat_add(argc, argv, FW_NAT_SOURCE);
 }
 
-static int fw_nat_show_dev(void)
+int fw_snat_get_rule(struct fw_nat_rule *rule)
 {
-	struct in_addr in;
 	int ret, key = 0;
 	int nat_fd;
-	struct fw_nat_rule rule;
 
+	memset(rule, 0, sizeof(*rule));
 	nat_fd = fw_map_get(FW_MAP_NAT);
 	if (nat_fd < 0)
 		return -1;
-	ret = bpf_map_lookup_elem(nat_fd, &key, &rule);
+	ret = bpf_map_lookup_elem(nat_fd, &key, rule);
 	if (ret < 0) {
 		printf("%s\n", RED_TEXT("failed to get information"));
-		return 0;
+	}
+	close(nat_fd);
+	return ret;
+}
+
+static int fw_nat_show_dev(void)
+{
+	struct in_addr in;
+	struct fw_nat_rule rule;
+	int ret;
+
+	ret = fw_snat_get_rule(&rule);
+	if (ret < 0) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return ret;
 	}
 	if (rule.to_addr == htonl(INADDR_ANY)) {
 		printf("%s: NAT rules are not configured\n", opts.iface);
@@ -303,6 +318,213 @@ static int fw_nat_help(__unused int argc, __unused char **argv)
 	       opts.argv[0], opts.argv[0], opts.argv[0]);
 	return 0;
 }
+
+static int fw_nat_add_cb(__unused void *ctx, int argc, char **argv)
+{
+	if (argc < 2)
+		return -1;
+	if (strcmp(argv[0], "snat"))
+		return -1;
+	if (strcmp(argv[1], "empty") == 0)
+		return 1;
+	argv += 1;
+	argc -= 1;
+	fw_snat_add(argc, argv);
+	return 1;
+}
+
+static int fw_nat_txt_to_policy_apply(void *ctx)
+{
+	FILE *f = (FILE *)ctx;
+	return fwlib_file_line_parse(f, NULL, fw_nat_add_cb);
+}
+
+static int fw_nat_txt_to_policy_show(void *ctx)
+{
+	FILE *f = (FILE *)ctx;
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+
+	read = getline(&line, &len, f);
+	if (read < 0)
+		return read;
+	printf("%s\n", line);
+
+	free(line);
+	return 0;
+}
+
+static int fw_nat_policy_to_txt(void *ctx)
+{
+	FILE *f = (FILE *)ctx;
+	struct in_addr in;
+	struct fw_nat_rule rule;
+	int ret;
+
+	ret = fw_snat_get_rule(&rule);
+	if (ret < 0) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return ret;
+	}
+	if (rule.to_addr == htonl(INADDR_ANY)) {
+		fprintf(f, "snat empty\n");
+	} else {
+		in.s_addr = rule.to_addr;
+		fprintf(f, "snat set-ip %s\n", inet_ntoa(in));
+	}
+	return 0;
+}
+
+struct config_ops nat_config_txt = {
+	.apply = fw_nat_txt_to_policy_apply,
+	.show = fw_nat_txt_to_policy_show,
+	.save = fw_nat_policy_to_txt,
+};
+
+int fw_yaml_write(yaml_emitter_t *emitter,
+			 char *key,
+			 char *value);
+static int fw_nat_policy_to_yaml(void *ctx)
+{
+	yaml_emitter_t *emitter = (yaml_emitter_t *)ctx;
+	yaml_event_t event;
+	struct fw_nat_rule rule;
+	struct in_addr in;
+	int ret;
+
+	fw_yaml_write(emitter, "nat", NULL);
+	yaml_sequence_start_event_initialize(&event, NULL, (yaml_char_t *)YAML_SEQ_TAG,
+			1, YAML_ANY_SEQUENCE_STYLE);
+	if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+	yaml_mapping_start_event_initialize(&event, NULL, (yaml_char_t *)YAML_MAP_TAG,
+			1, YAML_ANY_MAPPING_STYLE);
+	if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+	fw_yaml_write(emitter, "snat", "");
+
+	ret = fw_snat_get_rule(&rule);
+	if (ret < 0) {
+		fprintf(stderr, "Internal error. Please try again.\n");
+		return ret;
+	}
+	if (rule.to_addr != htonl(INADDR_ANY)) {
+		in.s_addr = rule.to_addr;
+		fw_yaml_write(emitter, "set-ip", inet_ntoa(in));
+	}
+
+	yaml_mapping_end_event_initialize(&event);
+	if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+	yaml_sequence_end_event_initialize(&event);
+	if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+	ret = 0;
+out:
+	return ret;
+error:
+	fprintf(stderr, "Failed to emit event %d: %s\n", event.type, emitter->problem);
+	ret = -1;
+	goto out;
+}
+
+#define  FWNAT_CMD_CONFIG_APPLY	0
+#define  FWNAT_CMD_CONFIG_SHOW	1
+static int fw_nat_yaml_to_policy_parse(void *ctx, int command)
+{
+	yaml_parser_t *parser = (yaml_parser_t *)ctx;
+	yaml_event_t event;
+	char *argv[MAX_RULE_WORDS];
+	char snat_key[] = "set-ip";
+	char *current_value;
+	int argc = 0;
+	int stop = 0;
+	int ret = 0;
+	int nat_type;
+
+	while (stop == 0) {
+		if (!yaml_parser_parse(parser, &event)) {
+			fprintf(stderr, "Parse error: %s\n", parser->problem);
+			return 1;
+		}
+
+		switch (event.type) {
+		case YAML_SEQUENCE_END_EVENT:
+			stop = 1;
+			ret = 0;
+			break;
+		case YAML_MAPPING_START_EVENT:
+			nat_type = 0;
+			argc = 0;
+			argv[1] = NULL;
+			break;
+		case YAML_MAPPING_END_EVENT:
+			if (nat_type == 0)
+				break;
+			if (nat_type == 1 && argc == 2) {
+				if (command == FWNAT_CMD_CONFIG_SHOW)
+					printf("snat set-ip %s\n", argv[1]);
+				if (command == FWNAT_CMD_CONFIG_APPLY)
+					fw_snat_add(argc, argv);
+			}
+			if (argv[1])
+				free(argv[1]);
+			break;
+		case YAML_SCALAR_EVENT:
+			current_value = (char *)event.data.scalar.value;
+			if (nat_type == 0) {
+				if (strcmp(current_value, "snat") == 0) {
+					nat_type = 1;
+					break;
+				}
+				fprintf(stderr, "Unknown keyword \"%s\"\n", current_value);
+				stop = 1;
+				ret = -1;
+				break;
+			}
+			if (nat_type == 1) {
+				if (argc == 1) {
+					argv[argc] = malloc(event.data.scalar.length + 1);
+					if (!argv[argc]) {
+						fprintf(stderr, "Error: cannot allocate memory\n");
+						stop = 1;
+						ret = -1;
+						break;
+					}
+					strncpy(argv[argc], current_value, event.data.scalar.length + 1);
+					argc++;
+				}
+				if (argc == 0) {
+					if (strcmp(current_value, "set-ip") == 0)
+						argv[argc++] = snat_key;
+				}
+				break;
+			}
+			break;
+		default:
+			break;
+		}
+		yaml_event_delete(&event);
+	}
+	return ret;
+}
+
+static int fw_nat_yaml_to_policy_apply(void *ctx)
+{
+	return fw_nat_yaml_to_policy_parse(ctx, FWNAT_CMD_CONFIG_APPLY);
+}
+
+static int fw_nat_yaml_to_policy_show(void *ctx)
+{
+	return fw_nat_yaml_to_policy_parse(ctx, FWNAT_CMD_CONFIG_SHOW);
+}
+
+struct config_ops nat_config_yaml = {
+	.apply = fw_nat_yaml_to_policy_apply,
+	.show = fw_nat_yaml_to_policy_show,
+	.save = fw_nat_policy_to_yaml,
+};
 
 static struct cmd nat_cmds[] = {
 	{ "show", fw_nat_show },

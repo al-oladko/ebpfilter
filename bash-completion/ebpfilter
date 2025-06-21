@@ -17,7 +17,7 @@ _ebpfilter() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="load unload reload rule status connection nat snat"
+    local commands="load unload reload policy rule status connection nat snat"
     case $prev in
         help)
             return
@@ -189,6 +189,54 @@ _ebpfilter() {
                         _available_interfaces
                         return 0
                     fi
+                    return 0
+                    ;;
+            esac
+            ;;
+        p | policy)
+            if [[ ! -v subcmd ]]; then
+                local c="help show save apply"
+                COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+                return 0
+            fi
+            case $subcmd in
+                a | apply)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "file" ]]; then
+                        _filedir
+                        return 0
+                    fi
+                    COMPREPLY=( $(compgen -W "file dev" -- ${cur}) )
+                    ;;
+                s | show)
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "file" ]]; then
+                        _filedir
+                        return 0
+                    fi
+                    COMPREPLY=( $(compgen -W "file" -- ${cur}) )
+                    return 0
+                    ;;
+                sa | sav | save)
+                    if [[ "$prev" == "format" ]]; then
+                        COMPREPLY=( $(compgen -W "txt yaml" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "dev" ]]; then
+                        COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                        return 0
+                    fi
+                    if [[ "$prev" == "file" ]]; then
+                        _filedir
+                        return 0
+                    fi
+                    COMPREPLY=( $(compgen -W "file dev format" -- ${cur}) )
                     return 0
                     ;;
             esac

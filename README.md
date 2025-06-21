@@ -179,6 +179,54 @@ This configuration allows:
 
 ---
 
+## Policy Management
+
+The policy command is used to manage firewall policies. Each network interface has its own policy, which is configured separately and stored in a dedicated file. By default, policies are saved in YAML format, but you can also use the txt format by specifying the format parameter in the command.
+
+### Save a Policy
+
+Currently, firewall policy changes made using the rule or nat commands are not saved automatically. To save the current policy, run:
+
+```bash
+ebpfilter policy save
+```
+
+By default, the policy will be saved to the /etc/firewall directory. You can specify a different file name and path using the file parameter. For example:
+
+```bash
+ebpfilter policy save file policy_allow_http.yaml
+```
+
+Or save the policy in txt format:
+
+```bash
+ebpfilter policy save file policy_deny_ssh.txt format txt
+```
+
+### Apply a Policy
+
+To load a policy from a file, use:
+
+```bash
+ebpfilter policy apply file policy.yaml
+```
+
+Or, to load the default policy file:
+
+```bash
+ebpfilter policy apply
+```
+
+### View a Policy
+
+To view a saved policy, use the show parameter. For example:
+
+```bash
+ebpfilter policy show file policy_allow_ssh.yaml
+```
+
+---
+
 ## NAT
 
 Currently, only **source NAT** is supported.

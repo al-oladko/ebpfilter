@@ -30,6 +30,7 @@
 #include "rule.h"
 #include "map.h"
 #include "nat.h"
+#include "policy.h"
 
 #include "fw_rule.h"
 #include "fw_dpi.h"
@@ -39,6 +40,7 @@
 #include "fw_nat.h"
 
 struct cfg cfg = {
+	.conf_dir = "/etc/ebpfilter",
 	.prog_dir_path = "/lib/bpf",
 	.prog_file_name = "ebpfilter.xdp.o",
 	.xdp_prog_name = "xdp_rcv",
@@ -646,7 +648,7 @@ static int fw_prog_connection(int argc, char **argv)
 static int fw_prog_help(__unused int argc, __unused char **argv)
 {
 	printf("Usage: %s OBJECT { COMMAND | help }\n"
-	       "where  OBJECT := { load | unload | rule | status | help }\n\n"
+	       "where  OBJECT := { load | unload | rule | nat | policy | status | help }\n\n"
 	       " %s load dev IFNAME      Load an XDP program for a interface IFNAME\n"
 	       " %s unload [dev IFNAME]  Unload the XDP program from interface IFNAME,\n"
 	       "                                or from all interfaces if IFNAME is not specified\n"
@@ -655,9 +657,10 @@ static int fw_prog_help(__unused int argc, __unused char **argv)
 	       " %s nat ...              nat rule managment. see '%s nat help' for more information\n"
 	       " %s status               List interfaces where the XDP program is running\n"
 	       " %s connection           View connection tracking table\n"
-	       " %s reload               Reattaching the XDP program while preserving the loaded rule set\n",
+	       " %s reload               Reattaching the XDP program while preserving the loaded rule set\n"
+	       " %s policy               firewall policy management\n",
 		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0],
-		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
+		opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0], opts.argv[0]);
 	return 0;
 }
 
@@ -671,6 +674,7 @@ static struct cmd cmds[] = {
 	{ "connection", fw_prog_connection },
 	{ "nat", fw_prog_nat },
 	{ "snat", fw_prog_snat },
+	{ "policy", fw_prog_policy },
 	{ NULL, fw_prog_help },
 };
 

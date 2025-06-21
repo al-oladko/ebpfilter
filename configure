@@ -57,11 +57,16 @@ else
     exit 1
 fi
 
+if ! ${PKG_CONFIG} --exists libyaml; then
+    echo "libyaml not found"
+    echo "please install libyaml"
+    exit 1
+fi
+
 if ${PKG_CONFIG} --exists libxdp; then
     echo "libxdp found"
     echo "HAVE_LIBXDP := 1" >> "$BUILD_CONF"
 fi
-
 
 detect_hz_from_kernel_config() {
     FILE="$1"

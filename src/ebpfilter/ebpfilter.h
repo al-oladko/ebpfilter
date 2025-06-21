@@ -9,6 +9,7 @@
 #define __unused __attribute__((__unused__))
 
 struct cfg {
+	char conf_dir[PATH_MAX];
 	char prog_dir_path[PATH_MAX];
 	char prog_file_name[NAME_MAX];
 	char xdp_prog_name[NAME_MAX];
@@ -32,6 +33,7 @@ struct opts {
 	int need_to_pin;
 	int argc;
 	char **argv;
+	char *rules_file;
 	int verbose;
 };
 

@@ -2,6 +2,9 @@
 // Copyright (C) 2025 Aleksei Oladko <aleks.oladko@gmail.com>
 #pragma once
 
+#include "fw_rule.h"
+#include "fw_dpi.h"
+
 struct ip_addr {
 	uint32_t ip;
 	uint32_t mask;
@@ -34,3 +37,6 @@ struct rule {
 };
 
 int fw_prog_rule(int argc, char **argv);
+
+extern struct config_ops rule_config_txt;
+extern struct config_ops rule_config_yaml;

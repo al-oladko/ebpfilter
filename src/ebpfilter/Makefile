@@ -1,6 +1,6 @@
 CLANG = clang
 CFLAGS = -O2 -Wall -Wextra -MMD -MP
-LDFLAGS = -lbpf
+LDFLAGS = -lbpf -lyaml
 
 ROOT_DIR ?= $(CURDIR)/../..
 -include $(ROOT_DIR)/build.conf

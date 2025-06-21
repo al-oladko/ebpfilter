@@ -18,14 +18,14 @@
 #ifdef HAVE_LIBXDP
 #include <xdp/libxdp.h>
 #endif
+#include <yaml.h>
 
 #include "ebpfilter.h"
 #include "lib.h"
 #include "map.h"
 #include "rule.h"
+#include "policy.h"
 
-#include "fw_rule.h"
-#include "fw_dpi.h"
 #include "fw_config.h"
 
 static void fw_stats_update(int gen_id)
@@ -853,6 +853,481 @@ static int fw_rule_show(int argc, char **argv)
 
 	return fw_rule_set_show(&set, gen_id % 2, true);
 }
+
+static int fw_rule_add_cb(void *ctx, int argc, char **argv)
+{
+	struct fw_rule_set *set = (struct fw_rule_set *)ctx;
+	struct rule rule;
+	int ret;
+
+	if (argc == 0)
+		return 0;
+	if (argc && strcmp(argv[0], "default:") == 0) {
+		int action;
+		if (argc != 3) {
+			fprintf(stderr, "malformed default rule\n");
+			return -1;
+		}
+		if (strcmp("accept", argv[2]) == 0) {
+			action = FW_PASS;
+		} else
+			if (strcmp("drop", argv[2]) == 0) {
+				action = FW_DROP;
+			} else {
+				fprintf(stderr, "usage: set default [accept|drop]\n");
+				return -1;
+			}
+		set->rules[set->num].action = action;
+		return 1;
+	} else {
+		ret = fw_build_rule(&rule, argc, argv);
+		if (ret < 0) {
+			fprintf(stderr, "malformed rule\n");
+			return -1;
+		}
+		ret = fw_rule_set_add(set, &rule);
+		if (ret < 0)
+			return -1;
+	}
+	return 0;
+}
+
+static int fw_rule_txt_to_policy(FILE *f, struct fw_rule_set *set)
+{
+	return fwlib_file_line_parse(f, (void *)set, fw_rule_add_cb);
+}
+
+static int fw_rule_txt_to_policy_apply(void *ctx)
+{
+	FILE *f = (FILE *)ctx;
+	struct fw_rule_set set;
+	int ret;
+
+	ret = fw_rule_txt_to_policy(f, &set);
+	if (ret < 0)
+		return ret;
+	return fw_policy_set(&set, NULL);
+}
+
+static int fw_rule_txt_to_policy_show(void *ctx)
+{
+	FILE *f = (FILE *)ctx;
+	struct fw_rule_set set;
+	int ret;
+
+	ret = fw_rule_txt_to_policy(f, &set);
+	if (ret < 0)
+		return ret;
+	return fw_rule_set_show(&set, 0, false);
+}
+
+static int fw_rule_policy_to_txt(void *ctx)
+{
+	FILE *f = (FILE *)ctx;
+	struct fw_rule_set set;
+	int ret;
+	int gen_id;
+	int i;
+	char *actions[] = {
+		[FW_PASS] = "accept",
+		[FW_DROP] = "drop",
+	};
+
+	ret = fw_policy_get(&set, &gen_id);
+	if (ret < 0) {
+		fprintf(stderr, "Error while getting policy.\n");
+		return ret;
+	}
+
+	for (i = 0; i < set.num+1; i++) {
+		struct fw_rule *rule = &set.rules[i];
+		unsigned int l7 = 0;
+		int j;
+
+		if (i == set.num) {
+			fprintf(f, "default: action %s\n", actions[rule->action]);
+			break;
+		}
+
+		fprintf(f, " src %s", fw_ip_str(rule->saddr, rule->smask));
+		fprintf(f, " dst %s", fw_ip_str(rule->daddr, rule->dmask));
+
+		if (rule->protocol) {
+			fprintf(f, " %s", protos[rule->protocol]);
+		}
+		if (rule->protocol == IPPROTO_ICMP) {
+			if (rule->icmp_type == ICMP_ECHO) {
+				fprintf(f, " service ping");
+			}
+		} else if (rule->sport)
+			fprintf(f, " src-port %d", ntohs(rule->sport));
+		if (rule->dport)
+			fprintf(f, " port %d", ntohs(rule->dport));
+
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (rule->params[j].type == FW_RULE_PARAM_L7_PROTOCOL) {
+				struct rule_l7 *drule = (struct rule_l7 *)&rule->params[j];
+				l7 = drule->protocol;
+			}
+		}
+		if (l7) {
+			fprintf(f, " service %s", srv_list[l7]);
+		}
+
+
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (rule->params[j].type == FW_RULE_PARAM_CONNLIMIT) {
+				struct connlimit *cl = (struct connlimit *)&rule->params[j];
+				int ct_limit, time_limit;
+				char t[] = {'s', 'm', 'h'};
+				unsigned char ind = 0;
+				ct_limit = cl->max_budget / cl->ct_cost;
+				time_limit = cl->max_budget / (cl->tick_cost * HZ);
+				if (time_limit >= 60 && time_limit % 60 == 0) {
+					time_limit /= 60;
+					ind++;
+					if (time_limit >= 60 && time_limit % 60 == 0) {
+						time_limit /= 60;
+						ind++;
+					}
+				}
+				fprintf(f, " connlimit %d/%d%c", ct_limit, time_limit, t[ind]);
+			}
+		}
+
+		fprintf(f, " action %s\n", actions[rule->action]);
+	}
+
+	return 0;
+}
+
+struct config_ops rule_config_txt = {
+		.apply = fw_rule_txt_to_policy_apply,
+		.show = fw_rule_txt_to_policy_show,
+		.save = fw_rule_policy_to_txt,
+};
+
+int fw_yaml_write(yaml_emitter_t *emitter,
+			 char *key,
+			 char *value)
+{
+	yaml_event_t event;
+	int ret = 0;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)key, strlen(key), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event))
+		goto error;
+
+	if (value) {
+	        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+	            (yaml_char_t *)value, strlen(value), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+	        if (!yaml_emitter_emit(emitter, &event))
+			goto error;
+	}
+	
+out:
+	return ret;
+error:
+	fprintf(stderr, "Failed to emit event %d: %s\n", event.type, emitter->problem);
+	ret = -1;
+	goto out;
+}
+
+static int fw_rule_policy_to_yaml(void *ctx)
+{
+	yaml_emitter_t *emitter = (yaml_emitter_t *)ctx;
+	yaml_event_t event;
+	struct fw_rule_set set;
+	int ret;
+	int gen_id;
+	int i;
+	char *actions[] = {
+		[FW_PASS] = "accept",
+		[FW_DROP] = "drop",
+	};
+
+
+	fw_yaml_write(emitter, "firewall", NULL);
+
+	yaml_sequence_start_event_initialize(&event, NULL, (yaml_char_t *)YAML_SEQ_TAG,
+			1, YAML_ANY_SEQUENCE_STYLE);
+	if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+	ret = fw_policy_get(&set, &gen_id);
+	if (ret < 0) {
+		fprintf(stderr, "Error while getting policy.\n");
+		return ret;
+	}
+
+	for (i = 0; i < set.num+1; i++) {
+		struct fw_rule *rule = &set.rules[i];
+		unsigned int l7 = 0;
+		char str[64];
+		int j;
+
+		yaml_mapping_start_event_initialize(&event, NULL, (yaml_char_t *)YAML_MAP_TAG,
+				1, YAML_ANY_MAPPING_STYLE);
+		if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+		if (i == set.num) {
+			fw_yaml_write(emitter, "default", "");
+			goto out_action;
+		}
+
+		fw_yaml_write(emitter, "rule", "");
+
+		fw_yaml_write(emitter, "src", fw_ip_str(rule->saddr, rule->smask));
+		fw_yaml_write(emitter, "dst", fw_ip_str(rule->daddr, rule->dmask));
+
+		if (rule->protocol) {
+			fw_yaml_write(emitter, "proto", protos[rule->protocol]);
+		}
+		if (rule->protocol == IPPROTO_ICMP) {
+			if (rule->icmp_type == ICMP_ECHO) {
+				fw_yaml_write(emitter, "service", "ping");
+			}
+		} else {
+			if (rule->sport) {
+				snprintf(str, sizeof(str), "%d", ntohs(rule->sport));
+				fw_yaml_write(emitter, "src-port", str);
+			}
+			if (rule->dport) {
+				snprintf(str, sizeof(str), "%d", ntohs(rule->dport));
+				fw_yaml_write(emitter, "port", str);
+			}
+		}
+
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (rule->params[j].type == FW_RULE_PARAM_L7_PROTOCOL) {
+				struct rule_l7 *drule = (struct rule_l7 *)&rule->params[j];
+				l7 = drule->protocol;
+			}
+		}
+		if (l7) {
+			fw_yaml_write(emitter, "service", srv_list[l7]);
+		}
+
+
+		for (j = 0; j < FW_RULE_MAX_PARAMS; j++) {
+			if (rule->params[j].type == FW_RULE_PARAM_CONNLIMIT) {
+				struct connlimit *cl = (struct connlimit *)&rule->params[j];
+				int ct_limit, time_limit;
+				char t[] = {'s', 'm', 'h'};
+				unsigned char ind = 0;
+				ct_limit = cl->max_budget / cl->ct_cost;
+				time_limit = cl->max_budget / (cl->tick_cost * HZ);
+				if (time_limit >= 60 && time_limit % 60 == 0) {
+					time_limit /= 60;
+					ind++;
+					if (time_limit >= 60 && time_limit % 60 == 0) {
+						time_limit /= 60;
+						ind++;
+					}
+				}
+				snprintf(str, sizeof(str), "%d/%d%c", ct_limit, time_limit, t[ind]);
+				fw_yaml_write(emitter, "connlimit", str);
+			}
+		}
+
+out_action:
+		fw_yaml_write(emitter, "action", actions[rule->action]);
+		yaml_mapping_end_event_initialize(&event);
+		if (!yaml_emitter_emit(emitter, &event)) goto error;
+	}
+
+	yaml_sequence_end_event_initialize(&event);
+	if (!yaml_emitter_emit(emitter, &event)) goto error;
+
+	ret = 0;
+out:
+	return ret;
+error:
+	fprintf(stderr, "Failed to emit event %d: %s\n", event.type, emitter->problem);
+	ret = -1;
+	goto out;
+}
+
+#define MAX_PARAM_LEN 64
+#define MAX_PARAM 32
+static int fw_rule_yaml_to_policy(void *ctx, struct fw_rule_set *set)
+{
+	yaml_parser_t *parser = (yaml_parser_t *)ctx;
+	yaml_event_t event;
+	struct rule rule;
+	int ret = 0, i, stop = 0;
+	char values[MAX_PARAM][MAX_PARAM_LEN];
+	int nv;
+	char *argv[MAX_RULE_WORDS];
+	int argc = 0;
+	int value = 0;
+	int rule_type = 0;
+	char *current_value;
+	struct {
+		char *key;
+		int skip;
+	} keys[] = {
+		{
+			.key = "action",
+		},
+		{
+			.key = "src",
+		},
+		{
+			.key = "dst",
+		},
+		{
+			.key = "proto",
+			.skip = 1,
+		},
+		{
+			.key = "service",
+		},
+		{
+			.key = "port",
+		},
+		{
+			.key = "src-port",
+		},
+		{
+			.key = "name",
+		},
+		{
+			.key = "connlimit",
+		},
+	};
+
+	do {
+		if (!yaml_parser_parse(parser, &event)) {
+			fprintf(stderr, "Parse error: %s\n", parser->problem);
+			return 1;
+		}
+
+		switch (event.type) {
+		case YAML_SEQUENCE_END_EVENT:
+			stop = 1;
+			break;
+		case YAML_MAPPING_START_EVENT:
+			nv = 0;
+			argc = 0;
+			rule_type = 0;
+			break;
+		case YAML_MAPPING_END_EVENT:
+			if (rule_type == 2)
+				break;
+			ret = fw_build_rule(&rule, argc, argv);
+			if (ret < 0) {
+				fprintf(stderr, "malformed rule\n");
+				stop = 1;
+				break;
+			}
+			ret = fw_rule_set_add(set, &rule);
+			if (ret < 0) {
+				stop = 1;
+				break;
+			}
+			break;
+		case YAML_SCALAR_EVENT:
+			current_value = (char *)event.data.scalar.value;
+			if (rule_type == 0) {
+				/* get rule type */
+				if (strcmp(current_value, "rule") == 0) {
+					rule_type = 1;
+				} else if (strcmp(current_value, "default") == 0) {
+					rule_type = 2;
+				} else {
+					fprintf(stderr, "Malformed file\n");
+					if (opts.verbose) {
+						fprintf(stderr, "Unknown rule type %s\n",
+						        current_value);
+					}
+					stop = 1;
+					break;
+				}
+				value = 1;
+				break;
+			}
+			if (value) {
+				if (event.data.scalar.length == 0) {
+					value = 0;
+					break;
+				}
+				if (event.data.scalar.length > MAX_PARAM_LEN - 1) {
+					fprintf(stderr, "Malformed file\n");
+					if (opts.verbose)
+						fprintf(stderr, "Parameter length is greater than %zu\n",
+						        event.data.scalar.length);
+					stop = 1;
+					break;
+				}
+				if (nv >= MAX_PARAM || argc >= MAX_RULE_WORDS) {
+					fprintf(stderr, "Malformed file\n");
+					if (opts.verbose)
+						fprintf(stderr, "Too many parameters %d/%d\n",
+						        argc, nv);
+					stop = 1;
+					break;
+				}
+				strncpy(values[nv], current_value, event.data.scalar.length + 1);
+				argv[argc++] = values[nv];
+				nv++;
+				value = 0;
+				break;
+			}
+			value = sizeof(keys)/sizeof(keys[0]);
+			if (rule_type == 2)
+				value = 1;
+			for (i = 0; i < value; i++) {
+				if (strcmp(current_value, keys[i].key) == 0) {
+					if (keys[i].skip == 0)
+						argv[argc++] = keys[i].key;
+					break;
+				}
+			}
+			if (i == value) {
+				fprintf(stderr, "Malformed file\n");
+				if (opts.verbose)
+					fprintf(stderr, "Unknown keyword %s\n",
+						current_value);
+				stop = 1;
+				break;
+			}
+			break;
+		default:
+			break;
+		};
+		yaml_event_delete(&event);
+	} while (stop == 0);
+	return ret;
+}
+
+static int fw_rule_yaml_to_policy_apply(void *ctx)
+{
+	struct fw_rule_set set;
+	int ret;
+
+	ret = fw_rule_yaml_to_policy(ctx, &set);
+	if (ret < 0)
+		return ret;
+	return fw_policy_set(&set, NULL);
+}
+
+static int fw_rule_yaml_to_policy_show(void *ctx)
+{
+	struct fw_rule_set set;
+	int ret;
+
+	ret = fw_rule_yaml_to_policy(ctx, &set);
+	if (ret < 0)
+		return ret;
+	return fw_rule_set_show(&set, 0, false);
+}
+
+struct config_ops rule_config_yaml = {
+		.apply = fw_rule_yaml_to_policy_apply,
+		.show = fw_rule_yaml_to_policy_show,
+		.save = fw_rule_policy_to_yaml,
+};
 
 static struct cmd rule_cmds[] = {
 	{ "show", fw_rule_show },
