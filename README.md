@@ -233,7 +233,6 @@ Currently, only **source NAT** is supported.
 A NAT rule must be defined for a network interface, and the IP address of that interface will be used as the **source IP address** in translated packets.
 
 Current NAT limitations:
-- Address translation for IP fragments is not supported.
 - If, after translating the source IP address, the new 5-tuple matches the 5-tuple of another session that is already being NATed, the NAT rule will not be applied.
 
 ### Add a NAT Rule

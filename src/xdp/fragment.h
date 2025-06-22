@@ -12,6 +12,7 @@ struct frag_info {
 	__u64	timeout;
 	size_t	len;
 	size_t	tot_len;
+	__u32	l4;
 };
 
 struct {
@@ -30,7 +31,9 @@ static __always_inline int fw_packet_is_fragment(const struct iphdr *iph)
 	return 0;
 }
 
-static __always_inline int fw_ip_fragment(struct xbuf *xbuf, int *action)
+static __always_inline int fw_ip_fragment(struct xbuf *xbuf,
+					  int *action,
+					  __u32 *l4)
 {
 	struct iphdr *iph = xbuf_ip_hdr(xbuf);
 	struct frag_key fk;
@@ -70,7 +73,7 @@ static __always_inline int fw_ip_fragment(struct xbuf *xbuf, int *action)
 		fi->tot_len = offset + frag_len;
 		pr_dbg("Last fragment tot_len set to %d, current len %d\n", fi->tot_len, fi->len);
 	} 
-
+	*l4 = fi->l4;
 	*action = FW_PASS;
 	return 1;
 }
@@ -78,7 +81,8 @@ static __always_inline int fw_ip_fragment(struct xbuf *xbuf, int *action)
 /* An entry is created if the first fragment is allowed. The remaining 
  * fragments will be allowed based on this entry
  */
-static __always_inline void fw_ip_fragment_finish(const struct xbuf *xbuf)
+static __always_inline void fw_ip_fragment_finish(const struct xbuf *xbuf,
+						  const struct fw4_tuple *tuple)
 {
 	struct iphdr *iph = xbuf_ip_hdr(xbuf);
 	struct frag_key fk;
@@ -87,12 +91,21 @@ static __always_inline void fw_ip_fragment_finish(const struct xbuf *xbuf)
 	if (!(xbuf->flags & XBUF_FLAG_IP_FRAG))
 		return;
 	fk.saddr = iph->saddr;
-	fk.daddr = iph->daddr;
+	/* In the case of source NAT, the destination IP address must be preserved
+	 * and used as part of the key for the hash table, because the destination
+	 * address in the IP header will be replaced with the address from
+	 * the original session.
+	 */
+	fk.daddr = xbuf->nat_ip ? xbuf->nat_ip : iph->daddr;
 	fk.ipid = iph->id;
 	fi.len = bpf_ntohs(iph->tot_len) - iph->ihl * 4;
 	fi.tot_len = 0;
+	/* The L4/ICMP part of the 5-tuple is preserved so that the original 5-tuple
+	 * can later be reconstructed for IP fragments.
+	 */
+	fi.l4 = tuple->l4all;
 	fi.timeout = bpf_jiffies64() + 30 * HZ;
-	pr_dbg("create new fi %x -> %x, ipid %x\n", iph->saddr, iph->daddr, iph->id);
+	pr_dbg("create new fi %x -> %x, ipid %x\n", iph->saddr, fk.daddr, iph->id);
 	bpf_map_update_elem(&fw_frag_list, &fk, &fi, BPF_ANY);
 }
 

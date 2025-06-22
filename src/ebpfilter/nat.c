@@ -63,23 +63,28 @@ static int fw_dev_get_ip(char *iface, __be32 *ip)
 	return 0;
 }
 
+static int nat_prog_ids[] = { FW_PROG_TC_NAT, FW_PROG_TC_NAT_FRAGMENT };
 static int fw_snat_enable(void)
 {
 	int map_fd, prog_fd, prog_id;
 	int key, ret;
+	unsigned int i;
 
 	map_fd = fw_map_get(FW_MAP_PROG_TABLE);
 	if (map_fd < 0)
 		return map_fd;
 
-	key = FW_PROG_TC_NAT * 2 + 1;
-	ret = bpf_map_lookup_elem(map_fd, &key, &prog_id);
-	if (ret < 0) {
-		return -1;
+	for (i = 0; i < sizeof(nat_prog_ids)/sizeof(nat_prog_ids[0]); i++) {
+		key = i * 2 + 1;
+		ret = bpf_map_lookup_elem(map_fd, &key, &prog_id);
+		if (ret < 0) {
+			return -1;
+		}
+		prog_fd = bpf_prog_get_fd_by_id(prog_id);
+		key = i * 2;
+		ret = bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
 	}
-	prog_fd = bpf_prog_get_fd_by_id(prog_id);
-	key = FW_PROG_TC_NAT * 2;
-	ret = bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
+
 	return 0;
 }
 
@@ -87,13 +92,17 @@ static int fw_snat_disable(void)
 {
 	int map_fd, prog_fd = 0;
 	int key;
+	unsigned int i;
 
 	map_fd = fw_map_get(FW_MAP_PROG_TABLE);
 	if (map_fd < 0)
 		return map_fd;
 
-	key = FW_PROG_TC_NAT * 2;
-	bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
+	for (i = 0; i < sizeof(nat_prog_ids)/sizeof(nat_prog_ids[0]); i++) {
+		key = i * 2;
+		bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
+	}
+
 	return 0;
 }
 

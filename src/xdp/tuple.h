@@ -69,3 +69,15 @@ static __always_inline int fill_fw4_tuple(const struct xbuf *xbuf,
 	}
 	return 0;
 }
+
+static __always_inline int fill_fw4_tuple_frag(const struct xbuf *xbuf,
+					       struct fw4_tuple *tuple)
+{
+	struct iphdr *iph = xbuf_ip_hdr(xbuf);
+
+	tuple->saddr = iph->saddr;
+	tuple->daddr = iph->daddr;
+	tuple->l4protocol = iph->protocol;
+
+	return 0;
+}

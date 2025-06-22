@@ -8,7 +8,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PROG_ARRAY);
 	__type(key, __u32);
 	__type(value, __u32);
-	__uint(max_entries, 4);
+	__uint(max_entries, FW_PROG_CALL_MAX * 2);
 } fw_prog_table SEC(".maps");
 
 static __always_inline int fw_bpf_goto(void *ctx, int label)

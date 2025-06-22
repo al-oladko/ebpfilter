@@ -15,6 +15,7 @@ struct fw4_tuple {
 			__u8 icmp_code;
 			__be16 icmp_id;
 		};
+		__u32	l4all;
 	};
 	//__u8 l4protocol;
 	__be32 l4protocol; /* 32bit bound for map keys */

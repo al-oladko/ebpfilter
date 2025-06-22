@@ -116,6 +116,7 @@ static int fw_tc_prog_attach(struct bpf_object *obj)
 
 static char *fw_prog_table_names[] = {
 	[FW_PROG_TC_NAT] = "tc_nat",
+	[FW_PROG_TC_NAT_FRAGMENT] = "tc_nat_fragment",
 };
 static int fw_call_table_init(struct bpf_object *obj)
 {

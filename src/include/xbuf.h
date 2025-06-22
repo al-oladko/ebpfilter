@@ -18,6 +18,7 @@ struct xbuf {
 	unsigned char		*transport_hdr;
 #endif
 	unsigned char		*payload;
+	__be32			nat_ip;
 	__u16			l3proto;
 	__u16			payload_len;
 	__u8			ct_dir;
@@ -42,6 +43,7 @@ static __always_inline void xbuf_init(struct xbuf *xbuf,
 	xbuf->payload_len = 0;
 	xbuf->dpi_processed = 0;
 	xbuf->flags = 0;
+	xbuf->nat_ip = 0;
 }
 
 static __always_inline void xbuf_xdp_init(struct xdp_md *ctx, struct xbuf *xbuf)

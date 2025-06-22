@@ -60,7 +60,8 @@ static __always_inline bool fw_nat_is_expired(const struct fw_nat_entry *nat)
 }
 
 static __always_inline int fw_nat_input(struct xbuf *xbuf,
-					struct fw4_tuple *key)
+					struct fw4_tuple *key,
+					bool frag)
 {
 	struct iphdr *iph = xbuf_ip_hdr(xbuf);
 	struct fw_nat_rule *rnat;
@@ -88,8 +89,14 @@ static __always_inline int fw_nat_input(struct xbuf *xbuf,
 		return 0;
 	
 	csum = bpf_csum_diff(&iph->daddr, sizeof(iph->daddr), &nat_entry->orig_ip, sizeof(nat_entry->orig_ip), (__u32)~iph->check);
+	xbuf->nat_ip = iph->daddr;
 	iph->daddr = nat_entry->orig_ip;
 	iph->check = csum_fold(csum);
+	key->daddr = nat_entry->orig_ip;
+
+	if (frag)
+		return 0;
+
 	if (key->l4protocol == IPPROTO_TCP) {
 		struct tcphdr *tcph = xbuf_tcp_hdr(xbuf);
 
@@ -110,8 +117,8 @@ static __always_inline int fw_nat_input(struct xbuf *xbuf,
 	return 0;
 }
 
-static __always_inline int fw_do_nat_output(struct xbuf *xbuf,
-					 const struct fw4_tuple *key)
+static __always_inline int fw_do_nat_output(const struct xbuf *xbuf,
+					    const struct fw4_tuple *key)
 {
 	struct iphdr *iph = xbuf_ip_hdr(xbuf);
 	struct fw_nat_rule *rnat;
@@ -165,6 +172,17 @@ static __always_inline int fw_do_nat_output(struct xbuf *xbuf,
 	ret = bpf_l3_csum_replace(xbuf->skb, xbuf_get_offset(xbuf, &iph->check), nat_entry->orig_ip, rnat->to_addr, 4);
 	if (ret < 0)
 		return ret;
+
+	/* At this point, any first IP fragment will reach this function via
+	 * a call from tc_nat, and therefore the fragmented packet flag will
+	 * not be set. As a result, NAT translation will be applied to the
+	 * L4 layer. All subsequent fragments will reach this function via
+	 * a call from tc_nat_fragment, where the fragmented packet flag
+	 * is set.
+	 */
+	if (xbuf->flags & XBUF_FLAG_IP_FRAG)
+		return 0;
+
 	if (key->l4protocol == IPPROTO_TCP) {
 		struct tcphdr *tcph = xbuf_tcp_hdr(xbuf);
 		if (!xbuf_check_access(xbuf, tcph, sizeof(*tcph)))
@@ -199,6 +217,43 @@ int tc_nat(struct __sk_buff *skb)
 	if (ret < 0)
 		return TC_ACT_SHOT;
 	return TC_ACT_OK;
+}
+
+SEC("tc")
+int tc_nat_fragment(struct __sk_buff *skb)
+{
+	struct xbuf xbuf;
+	struct fw4_tuple key;
+	int ret;
+
+	xbuf_skb_init(skb, &xbuf);
+	ret = fw_ip_rcv_fast(&xbuf);
+	if (ret == XDP_DROP)
+		return TC_ACT_SHOT;
+
+	xbuf.flags |= XBUF_FLAG_IP_FRAG;
+	fill_fw4_tuple_frag(&xbuf, &key);
+	ret = fw_do_nat_output(&xbuf, &key);
+	if (ret < 0)
+		return TC_ACT_SHOT;
+	return TC_ACT_OK;
+}
+
+static __always_inline int fw_nat_fragment(struct xbuf *xbuf, __u32 l4)
+{
+	struct fw4_tuple key;
+
+	if (xbuf_is_tx(xbuf))
+		return fw_bpf_goto(xbuf->skb, FW_PROG_TC_NAT_FRAGMENT);
+	/* rx */
+	fill_fw4_tuple_frag(xbuf, &key);
+	/* Reconstruct the original 5-tuple in order to find
+	 * the session to which NAT translation was applied.
+	 */
+	key.l4all = l4;
+	fw_nat_input(xbuf, &key, true);
+
+	return XDP_PASS;
 }
 
 static __always_inline int fw_nat_output(const struct xbuf *xbuf)

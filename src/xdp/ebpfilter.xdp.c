@@ -21,12 +21,12 @@
 #include "debug.h"
 #include "atomic.h"
 #include "xbuf.h"
-#include "packet.h"
-#include "fw_rule.h"
 #include "tuple.h"
+#include "fw_rule.h"
+#include "fragment.h"
+#include "packet.h"
 #include "connection.h"
 #include "dpi.h"
-#include "fragment.h"
 #include "nat.h"
 
 struct {
@@ -273,12 +273,13 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 	struct fw4_tuple key;
 	int ret;
 	int action;
+	__u32 frag_l4;
 
-	if (fw_ip_fragment(xbuf, &action)) {
+	if (fw_ip_fragment(xbuf, &action, &frag_l4)) {
 		/* TODO Add statistics for fragments */
 		if (action == FW_DROP)
 			return XDP_DROP;
-		return XDP_PASS;
+		return fw_nat_fragment(xbuf, frag_l4);
 	}
 
 	ret = fill_fw4_tuple(xbuf, &key);
@@ -288,7 +289,7 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 		return XDP_PASS;
 	}
 
-	ret = fw_nat_input(xbuf, &key);
+	ret = fw_nat_input(xbuf, &key, false);
 	if (ret < 0)
 		return XDP_DROP;
 
@@ -303,7 +304,7 @@ static __always_inline int fw_packet_filter(struct xbuf *xbuf)
 		return XDP_DROP;
 	}
 
-	fw_ip_fragment_finish(xbuf);
+	fw_ip_fragment_finish(xbuf, &key);
 	fw_conn_put(ct, &key);
 
 	return fw_nat_output(xbuf);
