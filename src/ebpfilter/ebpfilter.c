@@ -512,6 +512,61 @@ static int fw_prog_reload(int argc, char **argv)
 }
 
 #define MAP_IDS_NUM 16
+#define CT_FILTER_TIMEOUT_EXPIRED	1
+#define CT_FILTER_TIMEOUT_ACTIVE	2
+#define CT_FILTER_TIMEOUT_ALL		3
+struct ct_filter {
+	struct ip_addr src;
+	struct ip_addr dst;
+	struct ip_addr ip;
+	uint16_t port;
+	uint16_t sport;
+	uint8_t icmp_type;
+	uint8_t proto;
+	uint8_t l7protocol;
+	uint8_t timeout;
+};
+static int fw_ct_filter(const struct fw_conn *ct,
+			const struct fw4_tuple *key,
+			const struct ct_filter *filter,
+			time_t timeout,
+			time_t uptime)
+{
+	if (filter->src.ip && (filter->src.mask & key->saddr) != filter->src.ip) {
+		return 1;
+	}
+	if (filter->dst.ip && (filter->dst.mask & key->daddr) != filter->dst.ip) {
+		return 1;
+	}
+	if (filter->ip.ip &&
+	   ((filter->ip.mask & key->saddr) != filter->ip.ip) &&
+	   ((filter->ip.mask & key->daddr) != filter->ip.ip)) {
+		return 1;
+	}
+	if (filter->proto && filter->proto != key->l4protocol) {
+		return 1;
+	}
+	if (filter->port && filter->port != key->dport) {
+		return 1;
+	}
+	if (filter->sport && filter->sport != key->sport) {
+		return 1;
+	}
+	if (filter->icmp_type && filter->icmp_type != key->icmp_type) {
+		return 1;
+	}
+	if (filter->l7protocol && filter->l7protocol != ct->dpi.protocol) {
+		return 1;
+	}
+	if (filter->timeout == CT_FILTER_TIMEOUT_EXPIRED && timeout - uptime >= 0) {
+		return 1;
+	}
+	if (filter->timeout == CT_FILTER_TIMEOUT_ACTIVE && timeout - uptime < 0) {
+		return 1;
+	}
+	return 0;
+}
+
 static int fw_prog_connection(int argc, char **argv)
 {
 	int ret;
@@ -525,14 +580,184 @@ static int fw_prog_connection(int argc, char **argv)
 	struct fw4_tuple key, *prev_key = NULL;
 	struct fw_conn ct;
 	struct sysinfo sinfo;
+	struct ct_filter filter;
+	uint8_t timeout_show = 0;
 
-	if (argc > 0) {
-		if (argc != 2 || strcmp("dev", *argv))
-			return -1;
+	memset(&filter, 0, sizeof(filter));
+	filter.timeout = CT_FILTER_TIMEOUT_ACTIVE;
+	while (argc > 0) {
+		if (strcmp("ip", *argv) == 0) {
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'ip' requires an argument\n");
+				return -1;
+			}
+			if (filter.src.ip || filter.dst.ip) {
+				fprintf(stderr, "Error: The src option cannot be "
+				"specified if the ip option has already been set\n");
+				return -1;
+			}
+			ret = fw_get_ip(&filter.ip, *argv);
+			if (ret < 0)
+				return -1;
+			goto next;
+		}
+		if (strcmp("src", *argv) == 0) {
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'src' requires an argument\n");
+				return -1;
+			}
+			if (filter.ip.ip) {
+				fprintf(stderr, "Error: the src option cannot be "
+				"specified if the ip option has already been set\n");
+				return -1;
+			}
+			ret = fw_get_ip(&filter.src, *argv);
+			if (ret < 0)
+				return -1;
+			goto next;
+		}
+		if (strcmp("dst", *argv) == 0) {
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'dst' requires an argument\n");
+				return -1;
+			}
+			if (filter.ip.ip) {
+				fprintf(stderr, "Error: the src option cannot be "
+				"specified if the ip option has already been set\n");
+				return -1;
+			}
+			ret = fw_get_ip(&filter.dst, *argv);
+			if (ret < 0)
+				return -1;
+			goto next;
+		}
+		if (strcmp("icmp", *argv) == 0) {
+			filter.proto = IPPROTO_ICMP;
+			goto next;
+		}
+		if (strcmp("tcp", *argv) == 0) {
+			filter.proto = IPPROTO_TCP;
+			goto next;
+		}
+		if (strcmp("udp", *argv) == 0) {
+			filter.proto = IPPROTO_UDP;
+			goto next;
+		}
+		if (strcmp("port", *argv) == 0) {
+			if (filter.port) {
+				fprintf(stderr, "Error: only one 'port' allower.\n");
+				return -1;
+			}
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'port' requires an argument\n");
+				return -1;
+			}
+			ret = atoi(*argv);
+			if (!ret || ret > 65535) {
+				fprintf(stderr, "Error: invalid port number '%s'.\n", *argv);
+				return -1;
+			}
+			filter.port = htons(ret);
+			goto next;
+		}
+		if (strcmp("src-port", *argv) == 0) {
+			if (filter.sport) {
+				fprintf(stderr, "Error: only one 'src-port' allower.\n");
+				return -1;
+			}
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'src-port' requires an argument\n");
+				return -1;
+			}
+			ret = atoi(*argv);
+			if (!ret || ret > 65535) {
+				fprintf(stderr, "Error: invalid port number '%s'.\n", *argv);
+				return -1;
+			}
+			filter.sport = htons(ret);
+			goto next;
+		}
+		if (strcmp("dev", *argv) == 0) {
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'dev' requires an argument\n");
+				return -1;
+			}
+			argv++;
+			ret = parse_dev(*argv);
+			if (ret < 0) {
+				return -1;
+			}
+			goto next;
+		}
+		if (strcmp("timeout-status", *argv) == 0) {
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'timeout-status' requires an argument\n");
+				return -1;
+			}
+			if (strcmp("expired", *argv) == 0) {
+				filter.timeout = CT_FILTER_TIMEOUT_EXPIRED;
+				goto next;
+			} else
+			if (strcmp("active", *argv) == 0) {
+				filter.timeout = CT_FILTER_TIMEOUT_ACTIVE;
+				goto next;
+			} else
+			if (strcmp("all", *argv) == 0) {
+				filter.timeout = CT_FILTER_TIMEOUT_ALL;
+				goto next;
+			}
+		}
+		if (strcmp("timeout-show", *argv) == 0) {
+			timeout_show = 1;
+			goto next;
+		}
+		if (strcmp("service", *argv) == 0) {
+			argv++;
+			argc--;
+			if (argc <= 0) {
+				fprintf(stderr, "Error: option 'service' requires an argument\n");
+				return -1;
+			}
+			if (strcmp("ping", *argv) == 0) {
+				if (filter.proto && filter.proto != IPPROTO_ICMP) {
+					fprintf(stderr, "Error: ping service cannot be specified when TCP or UDP protocol is selected.\n");
+					return -1;
+				}
+				filter.proto = IPPROTO_ICMP;
+				filter.icmp_type = ICMP_ECHO;
+			} else
+			if (strcmp("tls", *argv) == 0) {
+				filter.l7protocol = DPI_PROTO_TLS;
+			} else
+			if (strcmp("ssh", *argv) == 0) {
+				filter.l7protocol = DPI_PROTO_SSH;
+			} else
+			if (strcmp("http", *argv) == 0) {
+				filter.l7protocol = DPI_PROTO_HTTP;
+			} else
+			if (strcmp("dns", *argv) == 0) {
+				filter.l7protocol = DPI_PROTO_DNS;
+			}
+			goto next;
+		}
+		fprintf(stderr,"Error: unknown option '%s'\n", *argv);
+		return -1;
+next:
+		argc--;
 		argv++;
-		ret = parse_dev(*argv);
-		if (ret < 0)
-			return -1;
 	}
 
 	if (fw_opts_check_and_get_dev() < 0)
@@ -544,7 +769,7 @@ static int fw_prog_connection(int argc, char **argv)
 	ret = bpf_get_link_xdp_id(iopts.findex, &prog_id, 0);
 #endif
 	if (ret < 0 || prog_id == 0) {
-		fprintf(stderr, "Prog is not attached to %s.\n", opts.iface);
+		fprintf(stderr, "Error: prog is not attached to %s.\n", opts.iface);
 		return -1;
 	}
 
@@ -588,16 +813,20 @@ static int fw_prog_connection(int argc, char **argv)
 		return -1;
 	}
 
-	if (opts.verbose)
+	if (timeout_show)
 	printf("            src             dst proto ports        info                        status\n");
 	else
 	printf("            src             dst proto ports        info    status\n");
 	while (bpf_map_get_next_key(ct_map_fd, prev_key, &key) == 0) {
 		time_t timeout;
 		if (bpf_map_lookup_elem(ct_map_fd, &key, &ct) != 0) {
-			continue;
+			goto next_ct;
 		}
 		timeout = (ct.timeout - (4294967295 - (300 * HZ))) / HZ;
+
+		if (fw_ct_filter(&ct, &key, &filter, timeout, sinfo.uptime))
+			goto next_ct;
+
 		fw_print_ip(key.saddr, 0, 15);
 		fw_print_ip(key.daddr, 0, 16);
 		print_array_index(protos, key.l4protocol, 6);
@@ -609,7 +838,7 @@ static int fw_prog_connection(int argc, char **argv)
 				printf("             ");
 		}
 		printf(" %18s", timeout - sinfo.uptime < 0 ? RED_TEXT("expired") : GREEN_TEXT("active"));
-		if (opts.verbose) {
+		if (timeout_show) {
 			if (timeout - sinfo.uptime < 0) {
 				int pr = 0;
 				int len = 0;
@@ -641,6 +870,7 @@ static int fw_prog_connection(int argc, char **argv)
 			}
 		}
 		printf(" %s by rule %d\n", ct.fw_action == FW_DROP ? RED_TEXT(" dropped") : GREEN_TEXT("accepted"), ct.fw_rule_num + 1);
+next_ct:
 		prev_key = &key;
 	}
 	return 0;

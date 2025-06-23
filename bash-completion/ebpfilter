@@ -54,7 +54,7 @@ _ebpfilter() {
     local actions="accept drop"
     local xdp_ifaces=$(_ebpffilter_get_xdp_interfaces)
     case $cmd in
-        u | unload | re | reload | c | connection)
+        u | unload | re | reload)
             if [[ "$prev" == "dev" ]]; then
                 COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
                 return 0
@@ -240,6 +240,41 @@ _ebpfilter() {
                     return 0
                     ;;
             esac
+            ;;
+        c | connection)
+            if [[ "$prev" == "dev" ]]; then
+                COMPREPLY=( $(compgen -W "${xdp_ifaces}" -- ${cur}) )
+                return 0
+            fi
+            if [[ "$prev" == "service" ]]; then
+                COMPREPLY=( $(compgen -W "http tls dns ssh ping" -- ${cur}) )
+                return 0
+            fi
+	    if [[ "$prev" == "timeout-status" ]]; then
+                COMPREPLY=( $(compgen -W "expired active all" -- ${cur}) )
+                return 0
+            fi
+	    local silent="src dst ip port src-port"
+	    if [[ " $silent " == *" $prev "* ]]; then
+                return 0
+            fi
+            local protos="tcp udp icmp"
+            local c="src dst ip port service timeout-status timeout-show dev"
+            local j proto
+            for ((j=$i; j<${#words[@]} - 1; j++)); do
+                word="${words[$j]}"
+                if [[ " $protos " == *" $word "* ]]; then
+                    proto=1
+                fi
+                if [[ " $c " == *" $word "* ]]; then
+                    c=$(echo "$c" | sed -E "s/(^| )$word( |$)/ /g")
+                fi
+            done
+            if [[ ! -v proto ]]; then
+                c="${c} ${protos}"
+            fi
+            COMPREPLY=( $(compgen -W "${c}" -- ${cur}) )
+            return 0
             ;;
     esac
 } &&
