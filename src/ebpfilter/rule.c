@@ -229,41 +229,6 @@ static int fw_policy_update(struct rule *rule)
 	return 0;
 }
 
-static int fw_get_ip(struct ip_addr *ip, char *arg)
-{
-	struct in_addr in;
-	char *mask_str;
-	int mask_len = 0;
-	uint32_t mask = 0xFFFFFFFF;
-	int ret;
-
-	if (strcmp(arg, "any") == 0) {
-		return 0;
-	}
-	mask_str = strchr(arg, '/');
-	if (mask_str) {
-		mask_str++;
-		mask_len = atoi(mask_str);
-		if (mask_len <= 0 || mask_len > 32) {
-			fprintf(stderr, "Invalid host/subnet '%s'\n", arg);
-			return -1;
-		}
-		mask_str--;
-		*mask_str = 0;
-		if (mask_len < 32)
-			mask = ((1U << mask_len) - 1) << (32 - mask_len);
-	}
-	ret = inet_aton(arg, &in);
-	if (!ret) {
-		fprintf(stderr, "Invalid host/subnet '%s'\n", arg);
-		return -1;
-	}
-
-	ip->mask = htonl(mask);
-	ip->ip = in.s_addr & ip->mask;
-	return 0;
-}
-
 static bool is_number(const char *str)
 {
 	while (*str) {

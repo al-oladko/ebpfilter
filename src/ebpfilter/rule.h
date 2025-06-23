@@ -4,11 +4,7 @@
 
 #include "fw_rule.h"
 #include "fw_dpi.h"
-
-struct ip_addr {
-	uint32_t ip;
-	uint32_t mask;
-};
+#include "lib.h"
 
 #define RULE_NAME_LEN 32
 struct rule {

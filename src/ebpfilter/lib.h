@@ -30,6 +30,11 @@
 
 #define MAX_RULE_WORDS 64
 
+struct ip_addr {
+	uint32_t ip;
+	uint32_t mask;
+};
+
 char *fw_ip_str(__be32 addr, __be32 mask);
 void fw_print_ip(__be32 addr, __be32 mask, int width);
 int fw_opts_check_and_get_dev(void);
@@ -37,4 +42,6 @@ int fw_try_set_dev(int argc, char **argv);
 int fw_for_each_dev(int (*f)(struct if_nameindex *, int));
 int parse_dev(char *iface);
 int fwlib_file_line_parse(FILE *f, void *ctx, int (*cb)(void *, int, char **));
+int fw_get_ip(struct ip_addr *ip, char *arg);
+
 extern char *protos[IPPROTO_RAW];
