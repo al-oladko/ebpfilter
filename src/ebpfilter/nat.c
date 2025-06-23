@@ -75,13 +75,13 @@ static int fw_snat_enable(void)
 		return map_fd;
 
 	for (i = 0; i < sizeof(nat_prog_ids)/sizeof(nat_prog_ids[0]); i++) {
-		key = i * 2 + 1;
+		key = nat_prog_ids[i] * 2 + 1;
 		ret = bpf_map_lookup_elem(map_fd, &key, &prog_id);
 		if (ret < 0) {
 			return -1;
 		}
 		prog_fd = bpf_prog_get_fd_by_id(prog_id);
-		key = i * 2;
+		key = nat_prog_ids[i] * 2;
 		ret = bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
 	}
 
@@ -99,7 +99,7 @@ static int fw_snat_disable(void)
 		return map_fd;
 
 	for (i = 0; i < sizeof(nat_prog_ids)/sizeof(nat_prog_ids[0]); i++) {
-		key = i * 2;
+		key = nat_prog_ids[i] * 2;
 		bpf_map_update_elem(map_fd, &key, &prog_fd, BPF_ANY);
 	}
 
